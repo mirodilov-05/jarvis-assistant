@@ -1,0 +1,101 @@
+# Jarvis voice assistant settings.
+# Most of these can also be changed in the app (Settings tab); app changes are
+# saved to data/settings.json and override this file.
+# After editing this file, restart Jarvis.
+
+[assistant]
+# Conversation mode: "friend" (warm, informal, keeps talking), "work" (short & on topic), "polite" (courteous).
+# Switch by voice: "Режим работа" / "Режим друг" / "Вежливый режим".
+mode = "friend"
+user_name = ""                # "Меня зовут ..." sets it
+smart_router = true           # let the AI understand free wording ("закинь в список молоко" -> add task)
+conversation_turns = 4        # in friend mode: how many replies you can give without saying "Джарвис" again
+greet_on_start = true
+briefing_on_start = true      # full voice report at logon (tasks, calendar, mail, messages, YouTube, advice)
+greeting_lang = "ru"          # language of the greeting and periodic nudges: "ru" or "uz"
+greeting_weather = true
+honorific_ru = "сэр"
+honorific_uz = "janob"
+
+[wake]
+# English wake phrases detected instantly by openWakeWord (any of: hey_jarvis, alexa, hey_mycroft).
+models = ["hey_jarvis", "alexa", "hey_mycroft"]
+# Sensitivity: 0.3 = reacts easily, 0.7 = strict. Every trigger is double-checked by speech recognition.
+threshold = 0.4
+# How close a heard word must sound to "Jarvis" (0.6 = loose, 0.8 = strict). Handles "жарис", "javvis", "джаррис"...
+name_similarity = 0.7
+# Names recognised from your speech in any language. Say just the name, or the name
+# and the command together: "Джарвис, открой телеграм".
+names = ["джарвис", "жарвис", "джервис", "джарвиз", "чарвис", "джарбис", "жарбис",  "jarvis", "djarvis", "jarvisa", "jarviz"]
+# Listen for names in normal speech (uses the GPU; turn off if it reacts to TV/talk).
+name_detection = true
+
+[performance]
+game_mode = true              # detect games: free GPU memory, pause name listening, no spoken nudges
+fullscreen_is_game = true     # any full-screen app (except browsers/players) counts as a game
+game_mode_cpu_speech = true   # in games, run speech recognition on the CPU so the GPU is all yours
+names_in_games = false        # keep listening for "Джарвис, ..." inside games (uses GPU); "Hey Jarvis" always works
+game_exes = []                # extra game .exe names, e.g. ["minecraft.exe"]
+
+[tasks]
+remind_before_min = 10       # warn N minutes before a task's due time
+overdue_repeat_hours = 2     # repeat reminders for overdue tasks
+nudge_hours = 3              # every N hours say how many tasks are open (0 = off)
+quiet_from = 22             # quiet hours (no nudges/repeats), wraps midnight
+quiet_to = 9
+
+[voice]
+# Languages Jarvis understands; the spoken language is detected automatically.
+languages = ["ru", "uz"]
+# Speech recognition model (offline). This one is fine-tuned for Uzbek and also handles Russian.
+whisper_model = "yuldashev222/whisper-small-uz-v1-ct2"
+# "cuda" = recognise speech on the NVIDIA GPU (~0.3 s), "cpu" = slower (~3 s).
+whisper_device = "cuda"
+# Voice engine per language:
+# "windows" = instant offline Windows voice (Russian only).
+# "edge"    = natural Microsoft neural voice (needs internet, 1-3 s; the reply text is
+#             sent to Microsoft). Needed for Uzbek. Falls back to "windows" when offline.
+tts_engine_ru = "piper"        # "piper" = natural offline voice (default), "edge", "windows"
+tts_engine_uz = "edge"
+edge_voice_ru = "ru-RU-DmitryNeural"     # or ru-RU-SvetlanaNeural
+edge_voice_uz = "uz-UZ-SardorNeural"     # or uz-UZ-MadinaNeural
+# Piper offline Russian voice: dmitri, denis, irina, ruslan (samples in voices/samples).
+piper_voice_ru = "dmitri"
+# Language detection model (stock Whisper; tells Russian from Uzbek reliably).
+lid_model = "base"
+# Offline Windows voice (last-resort fallback).
+tts_voice = "Irina"
+# Speech rate: -10 (slow) .. 10 (fast).
+tts_rate = 1
+# Speak answers to typed (Ctrl+Alt+J) commands too.
+speak_text_replies = false
+
+[hotkey]
+# Opens the text box for typing commands.
+text_box = "ctrl+alt+j"
+
+[llm]
+# "ollama" = ask Ollama directly (fast, ~0.5 s). "openjarvis" = go through the OpenJarvis server (slower, ~8 s).
+backend = "ollama"
+max_tokens = 160
+openjarvis_url = "http://127.0.0.1:8000"
+ollama_url = "http://127.0.0.1:11434"
+model = "qwen3.5:2b"
+
+[weather]
+# Default city for "Какая погода?" / "Ob-havo qanday?"
+city = "Tashkent"
+
+[email]
+# IMAP mailbox. For Gmail create an "App password" at
+# https://myaccount.google.com/apppasswords (requires 2-step verification)
+# and paste it below. Leave empty to disable email.
+address = ""
+app_password = ""
+imap_host = "imap.gmail.com"
+
+[telegram]
+# Get api_id and api_hash at https://my.telegram.org -> "API development tools".
+# Then run "Подключить Telegram.bat" once to log in. Leave empty to disable.
+api_id = ""
+api_hash = ""

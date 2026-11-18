@@ -1,0 +1,13 @@
+{
+  "name": "jarvis-whatsapp-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local bridge between Jarvis and your WhatsApp account (linked device via Baileys)",
+  "main": "bridge.js",
+  "scripts": { "start": "node bridge.js" },
+  "dependencies": {
+    "@whiskeysockets/baileys": "6.7.21",
+    "pino": "9.7.0",
+    "qrcode": "1.5.4"
+  }
+}

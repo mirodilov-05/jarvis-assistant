@@ -1,0 +1,26 @@
+[project]
+name = "jarvis-voice"
+version = "0.1.0"
+description = "Background voice assistant for OpenJarvis: wake word, tasks, apps, email, Telegram"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "openwakeword>=0.6.0",
+    "faster-whisper>=1.0",
+    "sounddevice>=0.4",
+    "numpy",
+    "requests",
+    "comtypes",
+    "keyboard",
+    "telethon",
+    "edge-tts>=7.3.1",
+    "nvidia-cublas-cu12==12.4.5.8 ; sys_platform == 'win32'",
+    "nvidia-cudnn-cu12==9.1.0.70 ; sys_platform == 'win32'",
+    "anthropic>=2.10.0",
+    "keyring>=25.7.0",
+    "icalendar>=7.3.0",
+    "recurring-ical-events>=3.8.2",
+    "piper-tts==1.8.0",
+]
+
+[tool.uv]
+package = false

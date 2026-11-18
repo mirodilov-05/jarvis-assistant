@@ -1,0 +1,1283 @@
+"""Jarvis — background voice assistant + desktop app (Russian + Uzbek).
+
+Wake it by:
+  * English wake phrases (instant): "Hey Jarvis", "Alexa", "Hey Mycroft"
+  * Saying its name in any language: "Джарвис", "Jarvis" ... — alone, or with the
+    command in the same breath: "Джарвис, открой телеграм".
+  * The 🎤 button in the app, or Ctrl+Alt+J to open the app window.
+
+Speech is recognised on the GPU (Whisper fine-tuned for Uzbek, also good at Russian).
+Abilities live in plugins/*.py. The app is served at http://127.0.0.1:50778 and
+opened as a desktop window (Edge app mode).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import collections
+import ctypes
+import json
+import logging
+import os
+import queue
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import winsound
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE))
+(BASE / "data").mkdir(exist_ok=True)
+# pythonw.exe has no console: give libraries that print progress somewhere to write
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(BASE / "data" / "stderr.log", "a", encoding="utf-8")
+
+import cuda_setup  # noqa: E402,F401  (must run before faster_whisper is imported)
+import numpy as np  # noqa: E402
+import sounddevice as sd  # noqa: E402
+
+logging.basicConfig(
+    filename=BASE / "data" / "assistant.log",
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    encoding="utf-8",
+)
+for noisy in ("httpx", "httpcore", "faster_whisper", "telethon", "comtypes", "urllib3", "aiohttp.access"):
+    logging.getLogger(noisy).setLevel(logging.WARNING)
+log = logging.getLogger("jarvis")
+
+import core  # noqa: E402
+from oww_compat import Model  # noqa: E402
+
+SAMPLE_RATE = 16000
+FRAME = 1280  # 80 ms, what openWakeWord expects
+APP_PORT = 50778
+APP_URL = f"http://127.0.0.1:{APP_PORT}"
+
+CONFIG = core.load_config()
+
+
+def cfg(section: str, key: str, default=None):
+    return core.setting(section, key, default)
+
+
+def langs() -> list[str]:
+    return [lg for lg in cfg("voice", "languages", ["ru", "uz"]) if lg in core.LANGS] or ["ru", "uz"]
+
+
+STATUS = {"state": "starting"}
+
+
+def set_status(state: str) -> None:
+    if STATUS["state"] != state:
+        STATUS["state"] = state
+        core.emit({"type": "status", "state": state})
+
+
+# ---------------------------------------------------------------------------
+# Text to speech: Piper (natural offline Russian voices), Microsoft neural voices
+# (online, needed for Uzbek), Windows SAPI (last-resort fallback)
+# ---------------------------------------------------------------------------
+
+_winmm = ctypes.windll.winmm
+VOICES_DIR = BASE / "voices"
+
+
+def _mci(cmd: str) -> str:
+    buf = ctypes.create_unicode_buffer(256)
+    _winmm.mciSendStringW(cmd, buf, 255, 0)
+    return buf.value
+
+
+def speakable(text: str) -> str:
+    """Make text nicer to hear: drop emoji/markdown, read times naturally."""
+    text = re.sub(r"[\U0001F000-\U0001FAFF☀-➿️‍*#_`]", "", text)
+    text = re.sub(r"\bhttps?://\S+", "", text)
+    text = text.replace("→", ",").replace("«", "").replace("»", "")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+class Speaker:
+    def __init__(self) -> None:
+        self._q: queue.Queue[tuple[str, str]] = queue.Queue()
+        self._stop = threading.Event()
+        self.speaking = threading.Event()
+        self.last_end = 0.0
+        self._piper: dict = {}
+        self._edge_off_until = 0.0
+        threading.Thread(target=self._run, daemon=True, name="tts").start()
+
+    def say(self, text: str, lang: str = "ru") -> None:
+        text = speakable(text or "")
+        if text:
+            self._stop.clear()
+            self._q.put((text, lang))
+
+    def stop(self) -> None:
+        self._stop.set()
+        while not self._q.empty():
+            try:
+                self._q.get_nowait()
+            except queue.Empty:
+                break
+
+    def busy(self) -> bool:
+        return self.speaking.is_set() or not self._q.empty() or time.time() - self.last_end < 0.5
+
+    def wait(self, timeout: float = 60) -> None:
+        end = time.time() + timeout
+        time.sleep(0.1)
+        while (self.speaking.is_set() or not self._q.empty()) and time.time() < end:
+            time.sleep(0.1)
+
+    # -- engines ----------------------------------------------------------
+    def _piper_voice(self, name: str):
+        if name not in self._piper:
+            from piper import PiperVoice
+
+            path = VOICES_DIR / f"ru_RU-{name}-medium.onnx"
+            if not path.exists():
+                return None
+            self._piper[name] = PiperVoice.load(str(path))
+        return self._piper[name]
+
+    def _piper_say(self, text: str) -> bool:
+        from piper import SynthesisConfig
+
+        voice = self._piper_voice(cfg("voice", "piper_voice_ru", "dmitri"))
+        if voice is None:
+            return False
+        rate = int(cfg("voice", "tts_rate", 1))
+        syn = SynthesisConfig(length_scale=max(0.6, 1.0 - rate * 0.04), noise_scale=0.6, noise_w_scale=0.7)
+        stream = None
+        try:
+            for chunk in voice.synthesize(text, syn_config=syn):   # one chunk per sentence: starts talking at once
+                if self._stop.is_set():
+                    break
+                if stream is None:
+                    stream = sd.OutputStream(samplerate=chunk.sample_rate, channels=1, dtype="int16")
+                    stream.start()
+                data = chunk.audio_int16_array
+                for i in range(0, len(data), 2048):
+                    if self._stop.is_set():
+                        break
+                    stream.write(data[i:i + 2048])
+                stream.write(np.zeros(int(chunk.sample_rate * 0.12), dtype=np.int16))  # small pause between sentences
+        finally:
+            if stream is not None:
+                stream.stop()
+                stream.close()
+        return True
+
+    def _edge(self, text: str, lang: str) -> bool:
+        import edge_tts
+
+        if time.time() < self._edge_off_until:
+            return False
+        voice = cfg("voice", f"edge_voice_{lang}") or {"ru": "ru-RU-DmitryNeural", "uz": "uz-UZ-SardorNeural"}[lang]
+        path = os.path.join(tempfile.gettempdir(), "jarvis_tts.mp3")
+        for attempt in (1, 2):
+            try:
+                asyncio.run(asyncio.wait_for(edge_tts.Communicate(text, voice).save(path), timeout=6))
+                break
+            except Exception as e:  # noqa: BLE001
+                log.warning("edge-tts attempt %d failed (%s)", attempt, type(e).__name__)
+                if attempt == 2:
+                    self._edge_off_until = time.time() + 120
+                    return False
+                time.sleep(0.4)
+        _mci("close jarvis")
+        _mci(f'open "{path}" type mpegvideo alias jarvis')
+        _mci("play jarvis")
+        while _mci("status jarvis mode") == "playing":
+            if self._stop.is_set():
+                _mci("stop jarvis")
+                break
+            time.sleep(0.05)
+        _mci("close jarvis")
+        return True
+
+    def _sapi(self, voice, text: str) -> None:
+        voice.Speak(text, 1)
+        while not voice.WaitUntilDone(100):
+            if self._stop.is_set():
+                voice.Speak("", 3)
+                break
+
+    def _run(self) -> None:
+        import comtypes
+        import comtypes.client
+
+        comtypes.CoInitialize()
+        sapi = comtypes.client.CreateObject("SAPI.SpVoice")
+        voices = sapi.GetVoices()
+        for i in range(voices.Count):
+            if cfg("voice", "tts_voice", "Irina").lower() in voices.Item(i).GetDescription().lower():
+                sapi.Voice = voices.Item(i)
+                break
+        try:  # load the Russian voice now so the first answer is instant
+            self._piper_voice(cfg("voice", "piper_voice_ru", "dmitri"))
+        except Exception:  # noqa: BLE001
+            log.exception("Piper voice failed to load")
+        while True:
+            text, lang = self._q.get()
+            self.speaking.set()
+            set_status("speaking")
+            try:
+                sapi.Rate = int(cfg("voice", "tts_rate", 1))
+                engine = cfg("voice", f"tts_engine_{lang}", "piper" if lang == "ru" else "edge")
+                done = False
+                if engine == "piper" and lang == "ru":
+                    done = self._piper_say(text)
+                elif engine == "edge":
+                    done = self._edge(text, lang) or (lang == "ru" and self._piper_say(text))
+                if not done:
+                    self._sapi(sapi, re.sub(r"[ʻʼ’‘`]", "'", text))
+            except Exception:  # noqa: BLE001
+                log.exception("TTS failed")
+            finally:
+                self.speaking.clear()
+                self.last_end = time.time()
+                if self._q.empty():
+                    set_status("listening")
+
+
+speaker = Speaker()
+core.set_speaker(speaker.say)
+
+
+# ---------------------------------------------------------------------------
+# Speech to text: a small stock Whisper picks the language (it tells Russian
+# from Uzbek almost perfectly), the Uzbek-tuned Whisper writes the words.
+# ---------------------------------------------------------------------------
+
+_models: dict = {}
+_whisper_lock = threading.Lock()
+
+
+def _load_model(name: str, device: str):
+    from faster_whisper import WhisperModel
+
+    try:
+        m = WhisperModel(name, device=device, compute_type="int8_float16" if device == "cuda" else "int8",
+                         cpu_threads=2)
+        m.transcribe(np.zeros(SAMPLE_RATE, dtype=np.float32), language="ru")  # warm up
+        return m
+    except Exception:  # noqa: BLE001
+        if device == "cpu":
+            raise
+        log.exception("Whisper %s on GPU failed, using CPU", name)
+        return _load_model(name, "cpu")
+
+
+def stt_device() -> str:
+    if GAME.get("on") and cfg("performance", "game_mode_cpu_speech", True):
+        return "cpu"
+    return cfg("voice", "whisper_device", "cuda")
+
+
+def whisper(kind: str = "main"):
+    """kind = "main" (Uzbek-tuned, writes text) or "lid" (stock base, detects language)."""
+    device = stt_device()
+    with _whisper_lock:
+        m = _models.get(kind)
+        if m is None or m[1] != device:
+            name = cfg("voice", "whisper_model", "yuldashev222/whisper-small-uz-v1-ct2") if kind == "main" else \
+                cfg("voice", "lid_model", "base")
+            _models[kind] = (_load_model(name, device), device)
+            log.info("Whisper %s model loaded: %s on %s", kind, name, device)
+        return _models[kind][0]
+
+
+PROMPTS = {
+    "ru": "Джарвис, открой телеграм, ватсап, ютуб, Яндекс Музыку. Добавь дело. Сколько у меня дел? Напиши маме. Запись. Стоп.",
+    "uz": "Jarvis, telegramni och, vazifa qo'sh, nechta vazifam bor, yozib ol, to'xtat.",
+}
+_HALLUCINATIONS = re.compile(
+    r"(продолжение следует|субтитр|редактор субтитров|спасибо за просмотр|подписывайтесь|ставьте лайк|"
+    r"thank you for watching|amara\.org|dima torzok|корректор|до новых встреч|^музыка$)", re.I)
+_REPEATS = re.compile(r"(.{2,12}?)\1{3,}")
+
+
+def detect_language(a: np.ndarray, with_prob: bool = False):
+    allowed = langs()
+    if len(allowed) == 1:
+        return (allowed[0], 1.0) if with_prob else allowed[0]
+    _, _, probs = whisper("lid").detect_language(a)
+    p = dict(probs)
+    p_ru = p.get("ru", 0) + 0.5 * p.get("uk", 0) + 0.5 * p.get("be", 0)   # accented Russian can look Ukrainian/Belarusian
+    if set(allowed) == {"ru", "uz"}:
+        # the stock model doesn't know Uzbek well, but it recognises Russian with ~99% certainty
+        lang = "ru" if p_ru >= 0.35 else "uz"
+    else:
+        lang = max(allowed, key=lambda lg: p.get(lg, 0))
+    return (lang, p_ru) if with_prob else lang
+
+
+_gate = {}
+_gate_lock = threading.Lock()
+
+
+def voiced_seconds(audio: np.ndarray) -> float:
+    """How much real human speech is in the clip (neural VAD), in seconds."""
+    from openwakeword.vad import VAD
+
+    with _gate_lock:
+        vad = _gate.setdefault("vad", VAD())
+        vad.reset_states()
+        n = sum(1 for i in range(0, len(audio) - 1280 + 1, 1280) if vad.predict(audio[i:i + 1280], frame_size=640) >= 0.5)
+    return n * 0.08
+
+
+def transcribe(audio: np.ndarray, accurate: bool = True, lang_hint: str | None = None) -> tuple[str, str, bool]:
+    """Return (text, lang, reliable). reliable=False means mumbling/noise/hallucination."""
+    if voiced_seconds(audio) < 0.24:   # no actual speech: don't let Whisper invent words
+        return "", lang_hint or langs()[0], False
+    a = audio.astype(np.float32) / 32768.0
+
+    def decode(lg: str):
+        segments, _ = whisper("main").transcribe(
+            a, language=lg, beam_size=5 if accurate else 2, vad_filter=False, without_timestamps=True,
+            condition_on_previous_text=False, initial_prompt=PROMPTS.get(lg) if accurate else None, temperature=0.0)
+        out = list(segments)
+        score = (sum(x.avg_logprob for x in out) / len(out)) if out else -9.0
+        return out, score
+
+    if lang_hint:
+        lang = lang_hint
+        segs, _ = decode(lang)
+    else:
+        lang, p_ru = detect_language(a, with_prob=True)
+        segs, score = decode(lang)
+        # accented Russian / Russian words inside Uzbek: when unsure, try the other language too and keep the clearer one
+        if set(langs()) == {"ru", "uz"} and 0.04 <= p_ru <= 0.85 and accurate:
+            other = "uz" if lang == "ru" else "ru"
+            segs2, score2 = decode(other)
+            if score2 > score + 0.1:
+                lang, segs = other, segs2
+            log.info("LID ambiguous p_ru=%.2f: ru/uz scores -> %s", p_ru, lang)
+    text = " ".join(s.text.strip() for s in segs).strip()
+    if not segs or not text:
+        return "", lang, False
+    if lang == "uz" and len(re.findall(r"[а-яё]", text.lower())) > len(text) * 0.5:
+        lang = "ru"
+    avg_logprob = sum(s.avg_logprob for s in segs) / len(segs)
+    no_speech = max(s.no_speech_prob for s in segs)
+    compression = max(s.compression_ratio for s in segs)
+    reliable = not (avg_logprob < -1.0 or (no_speech > 0.6 and avg_logprob < -0.6) or compression > 2.4
+                    or _HALLUCINATIONS.search(text) or _REPEATS.search(text.replace(" ", ""))
+                    # an echo of the vocabulary hint on silence/noise (real commands are heard confidently)
+                    or (text.strip(" .,!?").lower() in PROMPTS.get(lang, "").lower() and (no_speech > 0.3 or avg_logprob < -0.45)))
+    log.info("STT [%s] %.2f/%.2f/%.1f %s: %s", lang, avg_logprob, no_speech, compression,
+             "ok" if reliable else "REJECTED", text[:200])
+    return text, lang, reliable
+
+
+# ---------------------------------------------------------------------------
+# "Jarvis" spotting that tolerates accents: жарис, жаррис, jarrus, javvis, джарбис…
+# ---------------------------------------------------------------------------
+
+_LAT = str.maketrans({"а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "o", "ж": "j", "з": "z", "и": "i",
+                      "й": "y", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t",
+                      "у": "u", "ф": "f", "х": "h", "ц": "s", "ч": "j", "ш": "sh", "щ": "sh", "ъ": "", "ы": "i", "ь": "",
+                      "э": "e", "ю": "yu", "я": "ya", "ў": "o", "қ": "k", "ғ": "g", "ҳ": "h"})
+
+
+def _phonetic(word: str) -> str:
+    w = re.sub(r"[^a-zа-яёўқғҳ]", "", word.lower()).translate(_LAT)
+    w = w.replace("dzh", "j").replace("dj", "j").replace("zh", "j").replace("ch", "j").replace("sh", "s")
+    w = w.replace("w", "v").replace("b", "v").replace("ph", "f")
+    return re.sub(r"(.)\1+", r"\1", w)
+
+
+def is_jarvis(word: str) -> bool:
+    import difflib
+
+    p = _phonetic(word)
+    if not 4 <= len(p) <= 9:
+        return False
+    if p in {_phonetic(n) for n in cfg("wake", "names", [])}:
+        return True
+    if not (p.startswith("j") or p.startswith("dar") or p.startswith("yar")):
+        return False
+    if len(p) < 5 or not re.search(r"[sz](a|i|u|ga|ni|y)?$", p):   # the name ends in "-is": жарис, javvis, jarrus
+        return False
+    ratio = max(difflib.SequenceMatcher(None, p, t).ratio() for t in ("jarvis", "jarvisa", "jarvisi"))
+    return ratio >= float(cfg("wake", "name_similarity", 0.7))
+
+
+def find_name(text: str, max_pos: int = 2) -> int | None:
+    """Index of the word that is "Jarvis" if it opens the phrase (after optional "эй/hey/salom")."""
+    words = text.split()
+    for i, w in enumerate(words[:max_pos + 1]):
+        if is_jarvis(w):
+            before = [x for x in words[:i] if not _FILLER_WORD.match(x)]
+            return i if not before else None
+    return None
+
+
+_FILLER_WORD = re.compile(r"^(эй|ей|хей|хэй|hey|ey|xey|hay|e|э|привет|слушай|salom|assalomu|alaykum|hoy|ok|okay|окей|о|а|ну|aka|ака|бро|bro)[,.!]?$", re.I)
+
+
+# ---------------------------------------------------------------------------
+# Game mode: when a full-screen game runs, free the GPU and stay quiet
+# ---------------------------------------------------------------------------
+
+GAME: dict = {"on": False, "name": ""}
+_NOT_GAMES = {"explorer.exe", "msedge.exe", "chrome.exe", "browser.exe", "firefox.exe", "opera.exe", "applicationframehost.exe",
+              "searchhost.exe", "shellexperiencehost.exe", "startmenuexperiencehost.exe", "lockapp.exe", "vlc.exe",
+              "mpc-hc64.exe", "potplayermini64.exe", "telegram.exe", "whatsapp.exe", "code.exe", "claude.exe"}
+
+
+def _foreground_process() -> tuple[str, bool]:
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return "", False
+    pid = ctypes.c_ulong()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    h = kernel32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+    path = ""
+    if h:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = ctypes.c_ulong(1024)
+        if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            path = buf.value
+        kernel32.CloseHandle(h)
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long), ("r", ctypes.c_long), ("b", ctypes.c_long)]
+
+    rect = RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    sw, sh = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+    fullscreen = rect.l <= 0 and rect.t <= 0 and rect.r >= sw and rect.b >= sh
+    return path, fullscreen
+
+
+def _is_game(path: str, fullscreen: bool) -> bool:
+    low = path.lower()
+    exe = os.path.basename(low)
+    if not low or exe in _NOT_GAMES or "\\windows\\" in low:
+        return False
+    if any(k in low for k in ("\\steamapps\\common\\", "\\epic games\\", "\\riot games\\", "\\games\\", "\\battle.net\\",
+                              "\\ubisoft game launcher\\", "\\ea games\\", "\\xboxgames\\", "\\gog galaxy\\games")):
+        return True
+    extra = [g.lower() for g in cfg("performance", "game_exes", [])]
+    return exe in extra or (fullscreen and cfg("performance", "fullscreen_is_game", True))
+
+
+def game_watcher() -> None:
+    import requests
+
+    last_game_seen = 0.0
+    last_path = ""
+    while True:
+        try:
+            if cfg("performance", "game_mode", True):
+                path, fullscreen = _foreground_process()
+                if _is_game(path, fullscreen):
+                    last_game_seen, last_path = time.time(), path
+                # stay in game mode through quick Alt+Tabs: leave only after 60 s without the game in front
+                playing = time.time() - last_game_seen < 60
+                path = last_path
+            else:
+                playing = False
+            if playing != GAME["on"]:
+                GAME.update(on=playing, name=os.path.basename(path) if playing else "")
+                log.info("Game mode %s %s", "ON" if playing else "OFF", GAME["name"])
+                core.CONFIG["_game_mode"] = playing
+                core.emit({"type": "game", "on": playing, "name": GAME["name"]})
+                if playing:
+                    try:  # free ~2.5 GB of video memory: unload the language model until the game ends
+                        llm = core.CONFIG.get("llm", {})
+                        requests.post(llm.get("ollama_url", "http://127.0.0.1:11434") + "/api/generate",
+                                      json={"model": llm.get("model", "qwen3.5:2b"), "keep_alive": 0}, timeout=10)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    threading.Thread(target=lambda: (whisper("main"), whisper("lid")), daemon=True).start()
+                else:
+                    def _restore():
+                        whisper("main"), whisper("lid")
+                        llm = sys.modules.get("jarvis_plugin_llm")
+                        if llm:
+                            llm.warm_up()   # load the language model back so the next answer is fast
+                    threading.Thread(target=_restore, daemon=True).start()
+        except Exception:  # noqa: BLE001
+            log.exception("game watcher")
+        time.sleep(4)
+
+
+# ---------------------------------------------------------------------------
+# Microphone, wake phrases, names, voice recorder
+# ---------------------------------------------------------------------------
+
+_DICTATE_START = re.compile(r"(начни|включи|начать) диктовку|diktovka\w* (boshla|yoq)")
+_DICTATE_STOP = re.compile(r"(закончи|останови|стоп|хватит)\s*(диктовку)?|diktovka\w* (tugat|toxtat)|tugat|toxtat")
+_RECORD_STOP = re.compile(r"^(джарвис |jarvis )?(стоп|stop|хватит|останови|закончи|заверши|сохрани|toxtat|toxta|bas|tamom)\w*"
+                          r"( запис\w*| yozuv\w*| yozishni)?$")
+_FILLER = re.compile(r"^(эй|ей|хей|hey|привет|слушай|salom|hoy|ok|окей)\s+")
+class Listener:
+    SPEECH_ON = 0.55     # VAD probability that counts as speech
+    SPEECH_OFF = 0.35
+
+    def __init__(self) -> None:
+        from openwakeword.vad import VAD
+
+        self.frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=3000)
+        models = [m for m in cfg("wake", "models", ["hey_jarvis"]) if m in ("hey_jarvis", "alexa", "hey_mycroft")]
+        from oww_compat import download_models
+
+        download_models(models)
+        self.wake = Model(wakeword_models=models or ["hey_jarvis"], inference_framework="onnx")
+        self.vad = VAD()
+        self.manual = threading.Event()
+        self.recent = collections.deque(maxlen=25)   # last 2 s of audio for wake-word verification
+
+    def _callback(self, indata, frames, t, status) -> None:
+        try:
+            self.frames.put_nowait(indata[:, 0].copy())
+        except queue.Full:
+            pass
+
+    def flush(self) -> None:
+        while not self.frames.empty():
+            try:
+                self.frames.get_nowait()
+            except queue.Empty:
+                break
+
+    def speech_prob(self, chunk: np.ndarray) -> float:
+        return float(self.vad.predict(chunk, frame_size=640))
+
+    def record_command(self, start_timeout: float = 6.0, silence: float = 1.0, max_len: float = 25.0):
+        """Record one utterance using the neural VAD (doesn't cut quiet words or short pauses)."""
+        chunks: list[np.ndarray] = []
+        pre = collections.deque(maxlen=6)          # 0.48 s pre-roll
+        started, quiet, voiced, t0 = False, 0.0, 0, time.time()
+        self.vad.reset_states()
+        while True:
+            chunk = self.frames.get()
+            p = self.speech_prob(chunk)
+            if not started:
+                pre.append(chunk)
+                voiced = voiced + 1 if p >= self.SPEECH_ON else 0
+                if voiced >= 2:                     # 160 ms of real speech
+                    started = True
+                    chunks.extend(pre)
+                elif time.time() - t0 > start_timeout:
+                    return None
+                continue
+            chunks.append(chunk)
+            quiet = 0.0 if p >= self.SPEECH_OFF else quiet + 0.08
+            if quiet >= silence or len(chunks) * 0.08 > max_len:
+                break
+        return np.concatenate(chunks)
+
+    def run(self) -> None:
+        """Keep listening forever: reopen the microphone if it disappears (headset unplugged etc.)."""
+        while True:
+            try:
+                self._listen()
+            except Exception:  # noqa: BLE001
+                log.exception("Microphone stream failed; reopening in 3 s")
+                set_status("starting")
+                time.sleep(3)
+
+    def _listen(self) -> None:
+        with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=FRAME, callback=self._callback):
+            log.info("Listening. Wake models: %s", list(self.wake.models))
+            set_status("listening")
+            utter: list[np.ndarray] = []
+            pre = collections.deque(maxlen=5)
+            quiet = 0.0
+            last_beat = 0.0
+            while True:
+                try:
+                    chunk = self.frames.get(timeout=5)
+                except queue.Empty:
+                    raise RuntimeError("no audio from the microphone for 5 s")
+                now_t = time.time()
+                if now_t - last_beat > 10:      # heartbeat for the supervisor (proves the audio loop is alive)
+                    last_beat = now_t
+                    (core.DATA / "heartbeat").write_text(str(int(now_t)))
+                if core.RECORD_REQUEST.is_set():
+                    core.RECORD_REQUEST.clear()
+                    self.voice_record(core.RECORD_LANG.get("lang", "ru"))
+                    utter, quiet = [], 0.0
+                    continue
+                if self.manual.is_set():
+                    self.manual.clear()
+                    self.on_wake()
+                    utter, quiet = [], 0.0
+                    continue
+                if speaker.busy():
+                    utter, quiet = [], 0.0
+                    self.recent.clear()
+                    continue
+                self.recent.append(chunk)
+                # 1) "Hey Jarvis" & co. — instant, then double-checked by speech recognition
+                scores = self.wake.predict(chunk)
+                thr = float(cfg("wake", "threshold", 0.4))
+                name, score = max(scores.items(), key=lambda kv: kv[1]) if scores else ("", 0)
+                if score >= thr:
+                    if self.verify_wake(name, score):
+                        self.on_wake()
+                    self.wake.reset()
+                    self.recent.clear()
+                    utter, quiet = [], 0.0
+                    continue
+                # 2) "Джарвис, …" inside normal speech (paused during games to keep the GPU free)
+                if not cfg("wake", "name_detection", True) or (GAME["on"] and not cfg("performance", "names_in_games", False)):
+                    continue
+                p = self.speech_prob(chunk)
+                if p >= self.SPEECH_ON:
+                    if not utter:
+                        utter.extend(pre)
+                    utter.append(chunk)
+                    quiet = 0.0
+                elif utter:
+                    utter.append(chunk)
+                    quiet += 0.08
+                else:
+                    pre.append(chunk)
+                dur = len(utter) * 0.08
+                if utter and (quiet >= 0.8 or dur > 10):
+                    audio = np.concatenate(utter)
+                    utter, quiet = [], 0.0
+                    if 0.4 <= dur <= 10:
+                        self.check_names(audio)
+
+    def verify_wake(self, name: str, score: float) -> bool:
+        audio = np.concatenate(list(self.recent)) if self.recent else None
+        if audio is None:
+            return False
+        text, _, _ = transcribe(audio, accurate=False)
+        words = re.findall(r"[\w'ʻ’]+", text)
+        ok = any(is_jarvis(w) for w in words) or bool(re.search(r"(алекс|alex|mycroft|майкр)", text, re.I)) or score >= 0.8
+        log.info("Wake phrase %s (%.2f) heard as %r -> %s", name, score, text, "accepted" if ok else "ignored")
+        return ok
+
+    def check_names(self, audio: np.ndarray) -> None:
+        text, lang, reliable = transcribe(audio, accurate=False)
+        if not text:
+            return
+        words = re.findall(r"[\w'ʻ’-]+", text)
+        idx = find_name(" ".join(words))
+        if idx is None:
+            return
+        log.info("Name heard in [%s]: %s", lang, text)
+        rest_words = words[idx + 1:]
+        if len("".join(rest_words)) >= 3:
+            # it's addressed to Jarvis: transcribe again, carefully, in the detected language
+            text, lang, reliable = transcribe(audio, accurate=True)
+            words2 = re.findall(r"[\w'ʻ’-]+", text)
+            idx2 = find_name(" ".join(words2))
+            rest = " ".join(words2[idx2 + 1:]) if idx2 is not None else " ".join(rest_words)
+            if not reliable or len(rest) < 3:
+                self.on_wake()
+                return
+            core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": "голос"})
+            self.process(rest, lang)
+            self.wake.reset()
+            self.flush()
+        else:
+            self.on_wake()
+
+    def followup(self, depth: int) -> None:
+        """Listen for an answer to Jarvis's question (no wake word needed)."""
+        set_status("recording")
+        winsound.Beep(1046, 70)
+        audio = self.record_command(start_timeout=6.0)
+        if audio is None:
+            core.PENDING.clear()
+            set_status("listening")
+            return
+        text, lang, reliable = transcribe(audio, accurate=True)
+        if not text or not reliable:
+            set_status("listening")
+            return
+        core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": "голос"})
+        self.process(text, lang, depth)
+
+    def on_wake(self, retry: bool = True) -> None:
+        speaker.stop()
+        set_status("recording")
+        winsound.Beep(880, 110)
+        self.flush()
+        audio = self.record_command()
+        if audio is None:
+            winsound.Beep(440, 110)
+            set_status("listening")
+            return
+        set_status("thinking")
+        text, lang, reliable = transcribe(audio, accurate=True)
+        if not text or not reliable:
+            if retry:
+                speaker.say("Не расслышал, повторите, пожалуйста." if lang == "ru" else "Eshitmadim, qaytaring.", lang)
+                speaker.wait()
+                self.flush()
+                self.on_wake(retry=False)
+            else:
+                set_status("listening")
+            return
+        core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": "голос"})
+        self.process(text, lang)
+        self.wake.reset()
+        self.flush()
+
+    def process(self, text: str, lang: str, depth: int = 0) -> None:
+        if _DICTATE_START.search(core.normalize(text, lang)):
+            self.dictate(lang)
+            return
+        set_status("thinking")
+        handle(text, lang, "голос", speak=True, echo=False)
+        if core.RECORD_REQUEST.is_set():   # "запись" -> start the voice recorder right away
+            return
+        if core.FOLLOWUP.is_set():  # Jarvis asked a question: listen for the answer without the wake word
+            core.FOLLOWUP.clear()
+            if depth < int(cfg("assistant", "conversation_turns", 4 if core.mode() == "friend" else 2)):
+                speaker.wait()
+                self.flush()
+                self.followup(depth + 1)
+        if not speaker.busy():
+            set_status("listening")
+
+    # -- voice recorder ------------------------------------------------------
+    def voice_record(self, lang: str) -> None:
+        """Record everything until the user says "стоп" (or presses Stop in the app)."""
+        rec_dir = core.DATA / "recordings"
+        rec_dir.mkdir(exist_ok=True)
+        stamp = core.now().strftime("%Y-%m-%d_%H-%M-%S")
+        raw_path, wav_path = rec_dir / f"{stamp}.pcm", rec_dir / f"{stamp}.wav"
+        speaker.say("Записываю. Скажите «стоп», когда закончите." if lang == "ru"
+                    else "Yozib olyapman. Tugatish uchun «to'xtat» deng.", lang)
+        speaker.wait()
+        self.flush()
+        winsound.Beep(988, 150)
+        core.RECORD_STOP.clear()
+        set_status("taping")
+        core.emit({"type": "record", "state": "on", "name": wav_path.name})
+        samples = 0
+        cut_at = None
+        utter: list[np.ndarray] = []
+        utter_start = 0
+        quiet = 0.0
+        max_samples = int(float(cfg("recorder", "max_minutes", 180)) * 60 * SAMPLE_RATE)
+        self.vad.reset_states()
+        with open(raw_path, "wb") as raw:
+            while not core.RECORD_STOP.is_set() and samples < max_samples:
+                try:
+                    chunk = self.frames.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+                raw.write(chunk.tobytes())
+                p = self.speech_prob(chunk)
+                if p >= self.SPEECH_ON:
+                    if not utter:
+                        utter_start = max(0, samples - FRAME * 2)
+                    utter.append(chunk)
+                    quiet = 0.0
+                elif utter:
+                    utter.append(chunk)
+                    quiet += 0.08
+                samples += len(chunk)
+                if utter and quiet >= 0.7:
+                    dur = len(utter) * 0.08
+                    audio = np.concatenate(utter)
+                    utter = []
+                    if dur <= 3.0:   # only short phrases can be the stop command
+                        text, lg, reliable = transcribe(audio, accurate=False)
+                        if reliable and _RECORD_STOP.search(core.normalize(text, lg)):
+                            cut_at = utter_start
+                            break
+                if samples % (SAMPLE_RATE * 10) < FRAME:
+                    core.emit({"type": "record", "state": "on", "seconds": samples // SAMPLE_RATE})
+        # keep everything except the "стоп" itself
+        keep = (cut_at if cut_at is not None else samples) * 2
+        with open(raw_path, "rb") as f:
+            pcm = f.read(keep)
+        import wave
+
+        with wave.open(str(wav_path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(SAMPLE_RATE)
+            w.writeframes(pcm)
+        raw_path.unlink(missing_ok=True)
+        seconds = len(pcm) // 2 // SAMPLE_RATE
+        winsound.Beep(660, 150)
+        mins, secs = divmod(seconds, 60)
+        length = (f"{mins} мин {secs} сек" if mins else f"{secs} сек") if lang == "ru" else (f"{mins} daqiqa {secs} soniya" if mins else f"{secs} soniya")
+        core.emit({"type": "record", "state": "off", "name": wav_path.name, "seconds": seconds})
+        core.log_exchange("запись", lang, "[голосовая запись]", f"{wav_path.name}, {length}")
+        speaker.say(f"Запись сохранена, длительность {length}." if lang == "ru" else f"Yozuv saqlandi, {length}.", lang)
+        threading.Thread(target=self._transcribe_file, args=(wav_path, np.frombuffer(pcm, dtype=np.int16)), daemon=True).start()
+        self.flush()
+        set_status("listening")
+
+    def _transcribe_file(self, wav_path: Path, pcm: np.ndarray) -> None:
+        """Save a text transcript next to the recording (data/recordings/<name>.txt)."""
+        if len(pcm) < SAMPLE_RATE:
+            return
+        try:
+            a = pcm.astype(np.float32) / 32768.0
+            segments, info = whisper("main").transcribe(a, beam_size=5, vad_filter=True, condition_on_previous_text=True)
+            lines = [f"[{int(s.start // 60):02d}:{int(s.start % 60):02d}] {s.text.strip()}" for s in segments]
+            wav_path.with_suffix(".txt").write_text("\n".join(lines), encoding="utf-8")
+            core.emit({"type": "data", "file": wav_path.name})
+        except Exception:  # noqa: BLE001
+            log.exception("Transcript failed")
+
+    def dictate(self, lang: str) -> None:
+        path = core.DATA / "dictations" / f"{core.now():%Y-%m-%d_%H-%M}.md"
+        speaker.say("Начинаю диктовку. Чтобы закончить, скажите: закончи диктовку." if lang == "ru"
+                    else "Diktovka boshlandi. Tugatish uchun ayting: diktovkani tugat.", lang)
+        speaker.wait()
+        self.flush()
+        set_status("recording")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"# Диктовка {core.now():%Y-%m-%d %H:%M}\n\n")
+            silent = 0
+            while silent < 5:
+                audio = self.record_command(start_timeout=60, silence=1.5, max_len=30)
+                if audio is None:
+                    silent += 1
+                    continue
+                silent = 0
+                text, lg, reliable = transcribe(audio, accurate=True)
+                if not text or not reliable:
+                    continue
+                if len(text) < 40 and _DICTATE_STOP.search(core.normalize(text, lg)):
+                    break
+                f.write(text + "\n")
+                f.flush()
+                core.emit({"type": "message", "role": "user", "text": "📝 " + text, "lang": lg, "source": "диктовка"})
+        speaker.say(f"Диктовка сохранена: {path.name}." if lang == "ru" else f"Diktovka saqlandi: {path.name}.", lang)
+
+
+LISTENER: Listener | None = None
+
+
+# ---------------------------------------------------------------------------
+# Command handling (voice and text)
+# ---------------------------------------------------------------------------
+
+_STOP_WORDS = {"стоп", "хватит", "замолчи", "тихо", "отмена", "toxta", "toxtat", "jim", "bas", "yetarli"}
+HISTORY: collections.deque = collections.deque(maxlen=200)
+
+
+def _record(event: dict) -> None:
+    if event.get("type") == "message":
+        HISTORY.append(event)
+
+
+core.subscribe(_record)
+
+
+def handle(text: str, lang: str, source: str, speak: bool, echo: bool = True) -> str:
+    if echo:
+        core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": source})
+    if core.normalize(text, lang) in _STOP_WORDS:
+        speaker.stop()
+        return "Хорошо." if lang == "ru" else "Xo'p."
+    t0 = time.time()
+    reply = core.styled(core.route(text, lang, source, core.CONFIG), lang)
+    log.info("Reply [%s] in %.2fs: %s", lang, time.time() - t0, reply)
+    if source != "голос":
+        core.FOLLOWUP.clear()
+    core.log_exchange(source, lang, text, reply)
+    core.emit({"type": "message", "role": "jarvis", "text": reply, "lang": lang, "source": source})
+    if speak and reply:
+        speaker.say(reply, lang)
+    return reply
+
+
+# ---------------------------------------------------------------------------
+# Desktop app: local web server + Edge app window
+# ---------------------------------------------------------------------------
+
+def open_app_window() -> None:
+    edge = next((p for p in [
+        os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+    ] if os.path.exists(p)), None)
+    if edge:
+        subprocess.Popen([edge, f"--app={APP_URL}", "--window-size=1100,760",
+                          f"--user-data-dir={BASE / 'data' / 'app-profile'}", "--no-first-run"])
+    else:
+        os.startfile(APP_URL)
+
+
+def _plugin(name: str):
+    return sys.modules.get(f"jarvis_plugin_{name}")
+
+
+def app_state() -> dict:
+    tasks_mod, apps_mod = _plugin("tasks"), _plugin("apps")
+    return {
+        "status": STATUS["state"],
+        "tasks": core.load_json(core.DATA / "tasks.json", []),
+        "reminders": sorted(core.load_json(core.DATA / "reminders.json", []), key=lambda r: r["at"]),
+        "shortcuts": apps_mod.shortcuts() if apps_mod else {},
+        "skills": [{"name": s.name, "module": s.module, "title": s.title, "examples": s.examples} for s in core.SKILLS],
+        "history": list(HISTORY)[-80:],
+        "settings": {
+            "assistant": core.CONFIG.get("assistant", {}),
+            "wake": core.CONFIG.get("wake", {}),
+            "tasks": core.CONFIG.get("tasks", {}),
+            "voice": {k: v for k, v in core.CONFIG.get("voice", {}).items()},
+            "weather": core.CONFIG.get("weather", {}),
+            "performance": core.CONFIG.get("performance", {}),
+            "email": {"address": core.CONFIG.get("email", {}).get("address", ""),
+                      "configured": bool(core.CONFIG.get("email", {}).get("app_password"))},
+            "telegram": {"configured": (core.DATA / "telegram.session").exists()},
+        },
+        "dictations": sorted((p.name for p in (core.DATA / "dictations").glob("*.md")), reverse=True)[:30],
+        "recordings": [{"name": p.name, "size": p.stat().st_size,
+                        "seconds": max(0, (p.stat().st_size - 44) // 2 // SAMPLE_RATE),
+                        "has_text": p.with_suffix(".txt").exists()}
+                       for p in sorted((core.DATA / "recordings").glob("*.wav"), reverse=True)[:50]]
+                      if (core.DATA / "recordings").exists() else [],
+        "recording_now": STATUS["state"] == "taping",
+        "game": {"on": GAME["on"], "name": GAME["name"]},
+        "mode": core.mode(),
+        "notes": (sys.modules["jarvis_plugin_notes"].all_notes() if "jarvis_plugin_notes" in sys.modules else []),
+    }
+
+
+def connections_state() -> dict:
+    import connections
+
+    data = connections.load()
+    wa_mod, tg_mod, cal_mod = _plugin("whatsapp"), _plugin("telegram"), _plugin("calendar_ics")
+    api_id, api_hash = connections.telegram_creds()
+    return {
+        "email": [{**a, "has_password": bool(connections.get_secret(f"email:{a['address']}"))} for a in data["email"]],
+        "telegram": {"api_id": api_id, "has_hash": bool(api_hash),
+                     "connected": bool(tg_mod and tg_mod.connected())},
+        "whatsapp": {"enabled": bool(data["whatsapp"].get("enabled")),
+                     **({k: v for k, v in wa_mod.status().items() if k in ("state", "qr", "me")} if wa_mod else {})},
+        "youtube": {"channels": data["youtube"].get("channels", []),
+                    "has_key": bool(connections.get_secret("youtube:api_key"))},
+        "calendar": {"count": len(cal_mod.ics_urls()) if cal_mod else 0},
+        "ai": {"provider": data["ai"].get("provider", "local"), "model": data["ai"].get("model", "claude-opus-5-5"),
+               "has_key": bool(connections.get_secret("anthropic:api_key"))},
+    }
+
+
+def connections_action(action: str, body: dict) -> dict:
+    import connections
+
+    data = connections.load()
+    if action == "email_add":
+        addr = body["address"].strip()
+        host = body.get("imap_host") or _plugin("email_imap").guess_host(addr)
+        connections.set_secret(f"email:{addr}", body.get("password", "").replace(" ", ""))
+        data["email"] = [a for a in data["email"] if a["address"] != addr] + [
+            {"address": addr, "imap_host": host, "name": body.get("name") or addr}]
+        connections.save(data)
+        res = _plugin("email_imap").check_box(data["email"][-1], limit=1)
+        return {"ok": not res["error"], "message": res["error"] or f"Подключено. Непрочитанных: {res['unread']}"}
+    if action == "email_delete":
+        addr = body["address"]
+        connections.set_secret(f"email:{addr}", "")
+        data["email"] = [a for a in data["email"] if a["address"] != addr]
+        connections.save(data)
+        return {"ok": True}
+    if action == "telegram_creds":
+        data["telegram"]["api_id"] = str(body["api_id"]).strip()
+        connections.save(data)
+        connections.set_secret("telegram:api_hash", body["api_hash"].strip())
+        return {"ok": True}
+    if action == "telegram_code":
+        r = _plugin("telegram").login_send_code(body["phone"].strip())
+        return {"ok": True, "step": r}
+    if action == "telegram_signin":
+        r = _plugin("telegram").login_sign_in(code=body.get("code", "").strip(), password=body.get("password", ""))
+        return {"ok": r.startswith("ok"), "step": r}
+    if action == "telegram_logout":
+        _plugin("telegram").logout()
+        return {"ok": True}
+    if action == "whatsapp":
+        data["whatsapp"]["enabled"] = bool(body.get("enabled"))
+        connections.save(data)
+        wa = _plugin("whatsapp")
+        wa.start_bridge() if data["whatsapp"]["enabled"] else wa.stop_bridge()
+        return {"ok": True}
+    if action == "whatsapp_logout":
+        try:
+            import requests
+
+            requests.post("http://127.0.0.1:50779/logout", timeout=10)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": True}
+    if action == "youtube":
+        data["youtube"]["channels"] = [c.strip() for c in body.get("channels", []) if c.strip()]
+        connections.save(data)
+        if body.get("api_key"):
+            connections.set_secret("youtube:api_key", body["api_key"].strip())
+        return {"ok": True, "message": _plugin("youtube").report("ru", detailed=False) or "Сохранено"}
+    if action == "calendar_add":
+        cal = _plugin("calendar_ics")
+        cal.set_urls(cal.ics_urls() + [body["url"]])
+        return {"ok": True, "message": cal.summary("ru") or "Сохранено"}
+    if action == "calendar_clear":
+        _plugin("calendar_ics").set_urls([])
+        return {"ok": True}
+    if action == "ai":
+        data["ai"]["provider"] = body.get("provider", "local")
+        if body.get("model"):
+            data["ai"]["model"] = body["model"]
+        connections.save(data)
+        if body.get("api_key"):
+            connections.set_secret("anthropic:api_key", body["api_key"].strip())
+        if data["ai"]["provider"] == "claude":
+            reply = _plugin("llm").ask("Скажи одной фразой, что ты подключён.", "ru", max_tokens=60, use_history=False)
+            return {"ok": True, "message": reply}
+        return {"ok": True}
+    if action == "test":
+        mods = {"email": ("email_imap", "summary"), "telegram": ("telegram", "summary"),
+                "whatsapp": ("whatsapp", "summary"), "youtube": ("youtube", "report"), "calendar": ("calendar_ics", "summary")}
+        mod, fn = mods[body["source"]]
+        return {"ok": True, "message": getattr(_plugin(mod), fn)("ru") or "Не подключено"}
+    raise ValueError(f"unknown action {action}")
+
+
+def run_server() -> None:
+    from aiohttp import web
+
+    clients: set = set()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    def broadcast(event: dict) -> None:
+        msg = json.dumps(event, ensure_ascii=False)
+        for ws in list(clients):
+            asyncio.run_coroutine_threadsafe(ws.send_str(msg), loop)
+
+    core.subscribe(broadcast)
+
+    async def index(_r):
+        return web.FileResponse(BASE / "web" / "index.html")
+
+    async def state(_r):
+        return web.json_response(await asyncio.to_thread(app_state))
+
+    async def command(r):
+        body = await r.json()
+        text = (body.get("text") or "").strip()
+        lang = body.get("lang") or core.detect_lang(text)
+        speak = bool(body.get("speak", cfg("voice", "speak_text_replies", False)))
+        reply = await asyncio.to_thread(handle, text, lang, "текст", speak)
+        return web.json_response({"reply": reply})
+
+    async def listen(_r):
+        if LISTENER:
+            LISTENER.manual.set()
+        return web.json_response({"ok": True})
+
+    async def stop_speaking(_r):
+        speaker.stop()
+        return web.json_response({"ok": True})
+
+    async def tasks_add(r):
+        body = await r.json()
+        due = body.get("due")
+        import datetime as dt
+
+        task = _plugin("tasks").add_task(body["text"], dt.datetime.fromisoformat(due) if due else None,
+                                         body.get("lang", "ru"))
+        return web.json_response(task)
+
+    async def tasks_patch(r):
+        body = await r.json()
+        changes = {k: v for k, v in body.items() if k in ("text", "done", "due")}
+        if "due" in changes:
+            changes.update(notified=False, pre_notified=False, last_nag=None)
+        return web.json_response(_plugin("tasks").update_task(r.match_info["id"], **changes) or {})
+
+    async def tasks_delete(r):
+        _plugin("tasks").delete_task(r.match_info["id"])
+        return web.json_response({"ok": True})
+
+    async def shortcuts_add(r):
+        body = await r.json()
+        _plugin("apps").save_shortcut(body["name"], body["target"])
+        return web.json_response({"ok": True})
+
+    async def shortcuts_delete(r):
+        _plugin("apps").delete_shortcut(r.match_info["name"])
+        return web.json_response({"ok": True})
+
+    async def reminders_delete(r):
+        idx = int(r.match_info["idx"])
+        with core.file_lock:
+            items = sorted(core.load_json(core.DATA / "reminders.json", []), key=lambda x: x["at"])
+            if 0 <= idx < len(items):
+                items.pop(idx)
+            core.save_json(core.DATA / "reminders.json", items)
+        return web.json_response({"ok": True})
+
+    async def settings(r):
+        body = await r.json()
+        core.save_setting(body["section"], body["key"], body["value"])
+        if body["section"] == "wake" and LISTENER:
+            pass
+        return web.json_response({"ok": True})
+
+    async def reload(_r):
+        errors = await asyncio.to_thread(core.load_plugins)
+        core.start_hooks()
+        return web.json_response({"errors": errors, "count": len(core.SKILLS)})
+
+    async def dictation(r):
+        p = core.DATA / "dictations" / Path(r.match_info["name"]).name
+        return web.Response(text=p.read_text(encoding="utf-8") if p.exists() else "", content_type="text/plain")
+
+    async def record_start(_r):
+        core.RECORD_LANG["lang"] = "ru"
+        core.RECORD_STOP.clear()
+        core.RECORD_REQUEST.set()
+        return web.json_response({"ok": True})
+
+    async def record_stop(_r):
+        core.RECORD_STOP.set()
+        return web.json_response({"ok": True})
+
+    def _rec_path(name: str) -> Path:
+        return core.DATA / "recordings" / Path(name).name
+
+    async def recording_file(r):
+        p = _rec_path(r.match_info["name"])
+        return web.FileResponse(p) if p.exists() else web.Response(status=404)
+
+    async def recording_delete(r):
+        p = _rec_path(r.match_info["name"])
+        p.unlink(missing_ok=True)
+        p.with_suffix(".txt").unlink(missing_ok=True)
+        core.emit({"type": "data", "file": p.name})
+        return web.json_response({"ok": True})
+
+    async def notes_add(r):
+        body = await r.json()
+        sys.modules["jarvis_plugin_notes"].add_note(body["text"].strip())
+        return web.json_response({"ok": True})
+
+    async def notes_delete(r):
+        mod = sys.modules["jarvis_plugin_notes"]
+        notes = mod.all_notes()
+        idx = int(r.match_info["idx"])
+        if 0 <= idx < len(notes):
+            notes.pop(idx)
+            mod.save_all(notes)
+        return web.json_response({"ok": True})
+
+    async def open_folder(_r):
+        os.startfile(str(BASE))
+        return web.json_response({"ok": True})
+
+    async def conn_state(_r):
+        return web.json_response(await asyncio.to_thread(connections_state))
+
+    async def conn_action(r):
+        body = await r.json() if r.can_read_body else {}
+        try:
+            result = await asyncio.to_thread(connections_action, r.match_info["action"], body)
+        except Exception as e:  # noqa: BLE001
+            log.exception("connection action failed")
+            result = {"ok": False, "message": str(e)[:300]}
+        core.emit({"type": "connections"})
+        return web.json_response(result)
+
+    async def ws_handler(r):
+        ws = web.WebSocketResponse(heartbeat=20)
+        await ws.prepare(r)
+        clients.add(ws)
+        try:
+            async for _ in ws:
+                pass
+        finally:
+            clients.discard(ws)
+        return ws
+
+    app = web.Application()
+    app.add_routes([
+        web.get("/", index), web.get("/api/state", state), web.post("/api/command", command),
+        web.post("/api/listen", listen), web.post("/api/stop", stop_speaking),
+        web.post("/api/tasks", tasks_add), web.patch("/api/tasks/{id}", tasks_patch),
+        web.delete("/api/tasks/{id}", tasks_delete), web.post("/api/shortcuts", shortcuts_add),
+        web.delete("/api/shortcuts/{name}", shortcuts_delete), web.delete("/api/reminders/{idx}", reminders_delete),
+        web.post("/api/settings", settings), web.post("/api/reload", reload),
+        web.get("/api/dictation/{name}", dictation), web.post("/api/open-folder", open_folder),
+        web.get("/api/connections", conn_state), web.post("/api/connections/{action}", conn_action),
+        web.post("/api/notes", notes_add), web.delete("/api/notes/{idx}", notes_delete),
+        web.post("/api/record/start", record_start), web.post("/api/record/stop", record_stop),
+        web.get("/api/recording/{name}", recording_file), web.delete("/api/recording/{name}", recording_delete),
+        web.get("/ws", ws_handler), web.static("/static", BASE / "web"),
+    ])
+    runner = web.AppRunner(app, access_log=None)
+    loop.run_until_complete(runner.setup())
+    loop.run_until_complete(web.TCPSite(runner, "127.0.0.1", APP_PORT).start())
+    log.info("App server on %s", APP_URL)
+    loop.run_forever()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    global LISTENER
+    lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        lock.bind(("127.0.0.1", 50777))
+    except OSError:
+        # already running: just open the window
+        if "--app" in sys.argv:
+            open_app_window()
+        sys.exit(0)
+    log.info("Starting Jarvis")
+    # stay out of the way of games and other apps: below-normal CPU priority
+    ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x4000)
+    errors = core.load_plugins()
+    if errors:
+        log.error("Plugin errors: %s", errors)
+    threading.Thread(target=run_server, daemon=True, name="server").start()
+    try:  # if a game is already running, load speech models straight onto the CPU
+        _path, _fs = _foreground_process()
+        if cfg("performance", "game_mode", True) and _is_game(_path, _fs):
+            GAME.update(on=True, name=os.path.basename(_path))
+            core.CONFIG["_game_mode"] = True
+    except Exception:  # noqa: BLE001
+        pass
+    whisper("main")  # load the speech models before listening
+    whisper("lid")
+    LISTENER = Listener()
+    threading.Thread(target=LISTENER.run, daemon=True, name="listener").start()
+    threading.Thread(target=game_watcher, daemon=True, name="game-watcher").start()
+    core.start_hooks()  # greeting, task watcher, reminders, LLM warm-up
+
+    import keyboard
+
+    keyboard.add_hotkey(cfg("hotkey", "text_box", "ctrl+alt+j"), open_app_window)
+    if "--app" in sys.argv:
+        open_app_window()
+    while True:
+        time.sleep(3600)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        log.exception("Jarvis crashed")
+        raise

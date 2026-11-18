@@ -278,7 +278,7 @@ def _load_model(name: str, device: str):
 
 
 def stt_device() -> str:
-    if GAME.get("on") and cfg("performance", "game_mode_cpu_speech", True):
+    if GAME.get("on") and cfg("performance", "game_mode_cpu_speech", False):
         return "cpu"
     return cfg("voice", "whisper_device", "cuda")
 
@@ -357,7 +357,7 @@ def transcribe(audio: np.ndarray, accurate: bool = True, lang_hint: str | None =
         lang, p_ru = detect_language(a, with_prob=True)
         segs, score = decode(lang)
         # accented Russian / Russian words inside Uzbek: when unsure, try the other language too and keep the clearer one
-        if set(langs()) == {"ru", "uz"} and 0.04 <= p_ru <= 0.85 and accurate:
+        if set(langs()) == {"ru", "uz"} and 0.04 <= p_ru <= 0.85 and accurate and stt_device() == "cuda":
             other = "uz" if lang == "ru" else "ru"
             segs2, score2 = decode(other)
             if score2 > score + 0.1:
@@ -409,8 +409,11 @@ def is_jarvis(word: str) -> bool:
         return False
     if len(p) < 5 or not re.search(r"[sz](a|i|u|ga|ni|y)?$", p):   # the name ends in "-is": жарис, javvis, jarrus
         return False
+    # "jar…s/z" with up to 3 letters in between: jaris, jarus, jaruz, jaryus, jarvis, jarles…
+    if re.fullmatch(r"(j|dj|dar|yar)[aeo]?r\w{0,3}[sz](a|i|u|ga|ni|y)?", p) and len(p) <= 8:
+        return True
     ratio = max(difflib.SequenceMatcher(None, p, t).ratio() for t in ("jarvis", "jarvisa", "jarvisi"))
-    return ratio >= float(cfg("wake", "name_similarity", 0.7))
+    return ratio >= float(cfg("wake", "name_similarity", 0.62))
 
 
 def find_name(text: str, max_pos: int = 2) -> int | None:
@@ -423,7 +426,7 @@ def find_name(text: str, max_pos: int = 2) -> int | None:
     return None
 
 
-_FILLER_WORD = re.compile(r"^(эй|ей|хей|хэй|hey|ey|xey|hay|e|э|привет|слушай|salom|assalomu|alaykum|hoy|ok|okay|окей|о|а|ну|aka|ака|бро|bro)[,.!]?$", re.I)
+_FILLER_WORD = re.compile(r"^(эй|ей|хей|хэй|hey|ey|xey|hay|eng|e|э|привет|слушай|salom|assalomu|alaykum|hoy|ok|okay|окей|о|а|ну|aka|ака|бро|bro)[,.!]?$", re.I)
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +502,7 @@ def game_watcher() -> None:
                     try:  # free ~2.5 GB of video memory: unload the language model until the game ends
                         llm = core.CONFIG.get("llm", {})
                         requests.post(llm.get("ollama_url", "http://127.0.0.1:11434") + "/api/generate",
-                                      json={"model": llm.get("model", "qwen3.5:2b"), "keep_alive": 0}, timeout=10)
+                                      json={"model": llm.get("model", "qwen3.5:2b-q4_K_M"), "keep_alive": 0}, timeout=10)
                     except Exception:  # noqa: BLE001
                         pass
                     threading.Thread(target=lambda: (whisper("main"), whisper("lid")), daemon=True).start()
@@ -634,8 +637,8 @@ class Listener:
                     self.recent.clear()
                     utter, quiet = [], 0.0
                     continue
-                # 2) "Джарвис, …" inside normal speech (paused during games to keep the GPU free)
-                if not cfg("wake", "name_detection", True) or (GAME["on"] and not cfg("performance", "names_in_games", False)):
+                # 2) "Джарвис, …" inside normal speech
+                if not cfg("wake", "name_detection", True) or (GAME["on"] and not cfg("performance", "names_in_games", True)):
                     continue
                 p = self.speech_prob(chunk)
                 if p >= self.SPEECH_ON:
@@ -649,10 +652,11 @@ class Listener:
                 else:
                     pre.append(chunk)
                 dur = len(utter) * 0.08
-                if utter and (quiet >= 0.8 or dur > 10):
+                max_dur = 4.5 if GAME["on"] else 10   # in games only short phrases: commands, not team chatter
+                if utter and (quiet >= 0.7 or dur > max_dur + 0.5):
                     audio = np.concatenate(utter)
                     utter, quiet = [], 0.0
-                    if 0.4 <= dur <= 10:
+                    if 0.4 <= dur <= max_dur:
                         self.check_names(audio)
 
     def verify_wake(self, name: str, score: float) -> bool:
@@ -707,11 +711,13 @@ class Listener:
         core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": "голос"})
         self.process(text, lang, depth)
 
-    def on_wake(self, retry: bool = True) -> None:
+    def on_wake(self, retry: bool = True, keep_audio: bool = True) -> None:
         speaker.stop()
         set_status("recording")
         winsound.Beep(880, 110)
-        self.flush()
+        if not keep_audio:
+            self.flush()
+        # keep_audio: you may already be saying the command right after "Джарвис" — don't throw that away
         audio = self.record_command()
         if audio is None:
             winsound.Beep(440, 110)
@@ -724,7 +730,7 @@ class Listener:
                 speaker.say("Не расслышал, повторите, пожалуйста." if lang == "ru" else "Eshitmadim, qaytaring.", lang)
                 speaker.wait()
                 self.flush()
-                self.on_wake(retry=False)
+                self.on_wake(retry=False, keep_audio=False)
             else:
                 set_status("listening")
             return

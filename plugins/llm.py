@@ -125,7 +125,7 @@ def _ask_claude(system: str, messages: list[dict], max_tokens: int) -> str:
 def _ask_local(system: str, messages: list[dict], max_tokens: int) -> str:
     cfg = core.CONFIG.get("llm", {})
     r = requests.post(cfg.get("ollama_url", "http://127.0.0.1:11434") + "/api/chat", json={
-        "model": cfg.get("model", "qwen3.5:2b"), "messages": [{"role": "system", "content": system}] + messages,
+        "model": cfg.get("model", "qwen3.5:2b-q4_K_M"), "messages": [{"role": "system", "content": system}] + messages,
         "stream": False, "think": False, "keep_alive": "2m" if core.CONFIG.get("_game_mode") else "30m",
         "options": {"num_predict": max_tokens},
     }, timeout=120)
@@ -170,7 +170,7 @@ def warm_up() -> None:
         return
     try:
         requests.post(cfg.get("ollama_url", "http://127.0.0.1:11434") + "/api/generate",
-                      json={"model": cfg.get("model", "qwen3.5:2b"), "prompt": "", "keep_alive": "30m"}, timeout=120)
+                      json={"model": cfg.get("model", "qwen3.5:2b-q4_K_M"), "prompt": "", "keep_alive": "30m"}, timeout=120)
     except Exception:  # noqa: BLE001
         core.log.warning("Local model warm-up failed (is Ollama running?)")
 
@@ -190,8 +190,23 @@ def advice(ctx: Ctx) -> str:
                ctx.lang, max_tokens=400)
 
 
+_QUESTION = re.compile(r"^(что|как|почему|зачем|кто|где|когда|какой|какая|какие|сколько|расскажи|объясни|ты |а ты|"
+                       r"nima|qanday|nega|kim|qayer|qachon|qancha|nechta|sen )", re.I)
+
+
+def model_loaded() -> bool:
+    cfg = core.CONFIG.get("llm", {})
+    try:
+        r = requests.get(cfg.get("ollama_url", "http://127.0.0.1:11434") + "/api/ps", timeout=2).json()
+        return any(m.get("name") == cfg.get("model", "qwen3.5:2b-q4_K_M") for m in r.get("models", []))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def understand(text: str, lang: str) -> str | None:
     """Map free wording to one of Jarvis's commands (or None if it's just conversation)."""
+    if _QUESTION.search(text.strip()) or text.strip().endswith("?"):
+        return None   # questions/small talk go straight to the answer — no extra AI round-trip
     examples = []
     for sk in core.SKILLS:
         if sk.module == "llm" or sk.name in core._NO_SMART:
@@ -208,7 +223,7 @@ def understand(text: str, lang: str) -> str | None:
     try:
         cfg = core.CONFIG.get("llm", {})
         r = requests.post(cfg.get("ollama_url", "http://127.0.0.1:11434") + "/api/generate", json={
-            "model": cfg.get("model", "qwen3.5:2b"), "prompt": prompt, "stream": False, "think": False,
+            "model": cfg.get("model", "qwen3.5:2b-q4_K_M"), "prompt": prompt, "stream": False, "think": False,
             "keep_alive": "2m" if core.CONFIG.get("_game_mode") else "30m",
             "options": {"num_predict": 40, "temperature": 0},
         }, timeout=20)
@@ -236,6 +251,8 @@ def understand(text: str, lang: str) -> str | None:
 )
 def chat(ctx: Ctx) -> str:
     max_tokens, sentences = LIMITS[core.mode()]
+    if ctx.source == "голос" and provider() == "local" and not model_loaded():
+        core.speak("Секунду…" if ctx.lang == "ru" else "Bir soniya…", ctx.lang)   # model is loading (e.g. after a game)
     if ctx.source != "голос":
         return ask(ctx.text, ctx.lang, max_tokens=max_tokens * 3)
     reply = _short(ask(ctx.text, ctx.lang, max_tokens=max_tokens), sentences)

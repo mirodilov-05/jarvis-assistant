@@ -33,8 +33,8 @@ name_detection = true
 [performance]
 game_mode = true              # detect games: free GPU memory, pause name listening, no spoken nudges
 fullscreen_is_game = true     # any full-screen app (except browsers/players) counts as a game
-game_mode_cpu_speech = true   # in games, run speech recognition on the CPU so the GPU is all yours
-names_in_games = false        # keep listening for "Джарвис, ..." inside games (uses GPU); "Hey Jarvis" always works
+game_mode_cpu_speech = false  # true = speech on the CPU in games (frees ~0.6 GB VRAM but can cause CPU stutter)
+names_in_games = true         # in games listen for "Джарвис, ..." in short phrases only (team chatter is skipped)
 game_exes = []                # extra game .exe names, e.g. ["minecraft.exe"]
 
 [tasks]
@@ -80,7 +80,7 @@ backend = "ollama"
 max_tokens = 160
 openjarvis_url = "http://127.0.0.1:8000"
 ollama_url = "http://127.0.0.1:11434"
-model = "qwen3.5:2b"
+model = "qwen3.5:2b-q4_K_M"   # compact 4-bit build: fits in 4 GB VRAM, answers in ~0.4 s
 
 [weather]
 # Default city for "Какая погода?" / "Ob-havo qanday?"

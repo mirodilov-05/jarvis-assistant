@@ -23,7 +23,9 @@ models = ["hey_jarvis", "alexa", "hey_mycroft"]
 # Sensitivity: 0.3 = reacts easily, 0.7 = strict. Every trigger is double-checked by speech recognition.
 threshold = 0.4
 # How close a heard word must sound to "Jarvis" (0.6 = loose, 0.8 = strict). Handles "жарис", "javvis", "джаррис"...
-name_similarity = 0.7
+name_similarity = 0.62
+# Answer out loud after "Эй, Джарвис" ("Слушаю", "Что сделать?") before taking the command.
+reply = true
 # Names recognised from your speech in any language. Say just the name, or the name
 # and the command together: "Джарвис, открой телеграм".
 names = ["джарвис", "жарвис", "джервис", "джарвиз", "чарвис", "джарбис", "жарбис",  "jarvis", "djarvis", "jarvisa", "jarviz"]
@@ -46,9 +48,11 @@ quiet_to = 9
 
 [voice]
 # Languages Jarvis understands; the spoken language is detected automatically.
-languages = ["ru", "uz"]
+languages = ["ru"]
 # Speech recognition model (offline). This one is fine-tuned for Uzbek and also handles Russian.
-whisper_model = "yuldashev222/whisper-small-uz-v1-ct2"
+whisper_model = "large-v3-turbo"   # best Russian accuracy, hears even whispers (~0.45 s on the GPU)
+# Auto-gain for quiet speech/whispers: how much a quiet voice may be amplified (1 = off, 20 = whispers).
+max_gain = 20
 # "cuda" = recognise speech on the NVIDIA GPU (~0.3 s), "cpu" = slower (~3 s).
 whisper_device = "cuda"
 # Voice engine per language:

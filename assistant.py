@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import queue
+import random
 import re
 import socket
 import subprocess
@@ -377,6 +378,8 @@ def transcribe(audio: np.ndarray, accurate: bool = True, lang_hint: str | None =
                     or (text.strip(" .,!?").lower() in PROMPTS.get(lang, "").lower() and (no_speech > 0.3 or avg_logprob < -0.45)))
     log.info("STT [%s] %.2f/%.2f/%.1f %s: %s", lang, avg_logprob, no_speech, compression,
              "ok" if reliable else "REJECTED", text[:200])
+    if accurate:   # show in the app what was heard
+        core.emit({"type": "heard", "text": text, "ok": reliable})
     return text, lang, reliable
 
 
@@ -505,10 +508,10 @@ def game_watcher() -> None:
                                       json={"model": llm.get("model", "qwen3.5:2b-q4_K_M"), "keep_alive": 0}, timeout=10)
                     except Exception:  # noqa: BLE001
                         pass
-                    threading.Thread(target=lambda: (whisper("main"), whisper("lid")), daemon=True).start()
+                    threading.Thread(target=lambda: (whisper("main"), len(langs()) > 1 and whisper("lid")), daemon=True).start()
                 else:
                     def _restore():
-                        whisper("main"), whisper("lid")
+                        whisper("main"), len(langs()) > 1 and whisper("lid")
                         llm = sys.modules.get("jarvis_plugin_llm")
                         if llm:
                             llm.warm_up()   # load the language model back so the next answer is fast
@@ -527,6 +530,28 @@ _DICTATE_STOP = re.compile(r"(закончи|останови|стоп|хват�
 _RECORD_STOP = re.compile(r"^(джарвис |jarvis )?(стоп|stop|хватит|останови|закончи|заверши|сохрани|toxtat|toxta|bas|tamom)\w*"
                           r"( запис\w*| yozuv\w*| yozishni)?$")
 _FILLER = re.compile(r"^(эй|ей|хей|hey|привет|слушай|salom|hoy|ok|окей)\s+")
+WAKE_REPLIES = {
+    "friend": ["Да?", "Слушаю!", "Что сделать?", "Говори.", "Я тут.", "Да, что такое?"],
+    "work": ["Слушаю.", "Да.", "Готов."],
+    "polite": ["Да, сэр?", "Слушаю Вас.", "Чем могу помочь, сэр?", "К Вашим услугам."],
+}
+
+
+class AGC:
+    """Automatic gain for detection: lifts whispers/quiet speech up to a normal level (up to 20x)."""
+
+    def __init__(self, target: float = 3000.0, max_gain: float = 20.0) -> None:
+        self.gain, self.target, self.max_gain = 1.0, target, max_gain
+
+    def __call__(self, chunk: np.ndarray) -> np.ndarray:
+        x = chunk.astype(np.float32)
+        rms = float(np.sqrt(np.mean(x ** 2))) + 1e-6
+        if rms * self.gain > 150:   # adapt only on sound, not on silence
+            want = min(self.max_gain, max(1.0, self.target / rms))
+            self.gain += (want - self.gain) * (0.3 if want < self.gain else 0.08)
+        return np.clip(x * self.gain, -32768, 32767).astype(np.int16)
+
+
 class Listener:
     SPEECH_ON = 0.55     # VAD probability that counts as speech
     SPEECH_OFF = 0.35
@@ -541,6 +566,7 @@ class Listener:
         download_models(models)
         self.wake = Model(wakeword_models=models or ["hey_jarvis"], inference_framework="onnx")
         self.vad = VAD()
+        self.agc = AGC(max_gain=float(cfg("voice", "max_gain", 20)))
         self.manual = threading.Event()
         self.recent = collections.deque(maxlen=25)   # last 2 s of audio for wake-word verification
 
@@ -560,14 +586,16 @@ class Listener:
     def speech_prob(self, chunk: np.ndarray) -> float:
         return float(self.vad.predict(chunk, frame_size=640))
 
-    def record_command(self, start_timeout: float = 6.0, silence: float = 1.0, max_len: float = 25.0):
+    def record_command(self, start_timeout: float = 7.0, silence: float = 1.0, max_len: float = 25.0, prefix=None):
         """Record one utterance using the neural VAD (doesn't cut quiet words or short pauses)."""
         chunks: list[np.ndarray] = []
         pre = collections.deque(maxlen=6)          # 0.48 s pre-roll
         started, quiet, voiced, t0 = False, 0.0, 0, time.time()
         self.vad.reset_states()
+        if prefix:
+            chunks, started = list(prefix), True
         while True:
-            chunk = self.frames.get()
+            chunk = self.agc(self.frames.get())
             p = self.speech_prob(chunk)
             if not started:
                 pre.append(chunk)
@@ -604,7 +632,7 @@ class Listener:
             last_beat = 0.0
             while True:
                 try:
-                    chunk = self.frames.get(timeout=5)
+                    chunk = self.agc(self.frames.get(timeout=5))
                 except queue.Empty:
                     raise RuntimeError("no audio from the microphone for 5 s")
                 now_t = time.time()
@@ -711,14 +739,32 @@ class Listener:
         core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": "голос"})
         self.process(text, lang, depth)
 
+    def _already_talking(self, window: float = 0.6) -> list[np.ndarray] | None:
+        """Listen briefly: if you're already saying the command, return that audio (so we don't talk over you)."""
+        chunks, voiced, end = [], 0, time.time() + window
+        while time.time() < end:
+            try:
+                c = self.agc(self.frames.get(timeout=0.2))
+            except queue.Empty:
+                continue
+            chunks.append(c)
+            voiced = voiced + 1 if self.speech_prob(c) >= self.SPEECH_ON else 0
+            if voiced >= 2:
+                return chunks
+        return None
+
     def on_wake(self, retry: bool = True, keep_audio: bool = True) -> None:
         speaker.stop()
         set_status("recording")
-        winsound.Beep(880, 110)
-        if not keep_audio:
+        head = self._already_talking() if keep_audio else None
+        if head is None and cfg("wake", "reply", True):
+            # answer out loud, like a person: "Да?", "Слушаю", "Что сделать?"
+            speaker.say(random.choice(WAKE_REPLIES[core.mode()]), "ru")
+            speaker.wait(5)
             self.flush()
-        # keep_audio: you may already be saying the command right after "Джарвис" — don't throw that away
-        audio = self.record_command()
+        else:
+            winsound.Beep(880, 90)
+        audio = self.record_command(prefix=head)
         if audio is None:
             winsound.Beep(440, 110)
             set_status("listening")
@@ -785,6 +831,7 @@ class Listener:
                 except queue.Empty:
                     continue
                 raw.write(chunk.tobytes())
+                chunk = self.agc(chunk)
                 p = self.speech_prob(chunk)
                 if p >= self.SPEECH_ON:
                     if not utter:
@@ -1081,7 +1128,7 @@ def run_server() -> None:
     async def command(r):
         body = await r.json()
         text = (body.get("text") or "").strip()
-        lang = body.get("lang") or core.detect_lang(text)
+        lang = core.detect_lang(text)
         speak = bool(body.get("speak", cfg("voice", "speak_text_replies", False)))
         reply = await asyncio.to_thread(handle, text, lang, "текст", speak)
         return web.json_response({"reply": reply})
@@ -1266,7 +1313,8 @@ def main() -> None:
     except Exception:  # noqa: BLE001
         pass
     whisper("main")  # load the speech models before listening
-    whisper("lid")
+    if len(langs()) > 1:
+        whisper("lid")
     LISTENER = Listener()
     threading.Thread(target=LISTENER.run, daemon=True, name="listener").start()
     threading.Thread(target=game_watcher, daemon=True, name="game-watcher").start()

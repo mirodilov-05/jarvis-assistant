@@ -106,6 +106,7 @@
     <button data-s="dictations">📝 Диктовки</button>
     <button data-s="settings">⚙️ Настройки</button>
   </nav>
+  <div class="side-foot" id="heard" style="color:var(--accent);min-height:34px"></div>
   <div class="side-foot">«Джарвис, …» или «Hey Jarvis»<br>Ctrl+Alt+J — открыть окно</div>
 </aside>
 <main>
@@ -124,7 +125,7 @@
   <section id="chat" class="section active">
     <div id="messages"></div>
     <div class="composer">
-      <input id="cmd" type="text" placeholder="Напишите команду по-русски или o'zbekcha…  (например: «Добавь дело купить хлеб завтра в 10»)" autocomplete="off">
+      <input id="cmd" type="text" placeholder="Напишите команду…  (например: «Добавь дело купить хлеб завтра в 10»)" autocomplete="off">
       <label class="switch" title="Отвечать голосом"><input type="checkbox" id="speakToggle"> 🔊</label>
       <button class="btn" id="sendBtn">Отправить</button>
     </div>
@@ -375,8 +376,8 @@ function renderSettings() {
     <div class="card"><h3>Приветствие</h3>${sw("assistant", "greet_on_start", "Приветствовать при включении")}
       ${sw("assistant", "briefing_on_start", "Делать полный отчёт при включении (дела, почта, сообщения, YouTube)")}
       ${sw("assistant", "greeting_weather", "Говорить погоду в приветствии")}
-      ${sel("assistant", "greeting_lang", "Язык приветствия и напоминаний", [["ru", "Русский"], ["uz", "O'zbekcha"]])}
-      ${inp("assistant", "honorific_ru", "Обращение (рус.)")}${inp("assistant", "honorific_uz", "Murojaat (o'zb.)")}</div>
+      
+      ${inp("assistant", "honorific_ru", "Обращение (рус.)")}</div>
     <div class="card"><h3>Пробуждение</h3>${modelBox}
       ${inp("wake", "threshold", "Чувствительность к английским фразам (0.3 — легко, 0.7 — строго)", "number", 'step="0.05" min="0.1" max="0.95"')}
       ${inp("wake", "name_similarity", "Насколько похоже должно звучать имя (0.6 — свободно, 0.8 — строго)", "number", 'step="0.05" min="0.5" max="0.95"')}
@@ -396,8 +397,6 @@ function renderSettings() {
       ${sel("voice", "piper_voice_ru", "Голос Piper", [["dmitri", "Дмитрий"], ["denis", "Денис"], ["ruslan", "Руслан"], ["irina", "Ирина"]])}
       <button class="btn ghost" onclick="api('/api/command','POST',{text:'привет',speak:true})">🔊 Послушать</button>
       ${sel("voice", "edge_voice_ru", "Нейроголос Microsoft (рус.)", [["ru-RU-DmitryNeural", "Дмитрий"], ["ru-RU-SvetlanaNeural", "Светлана"]])}
-      ${sel("voice", "tts_engine_uz", "Голос для узбекского", [["edge", "Нейроголос (интернет)"], ["windows", "Windows (русский голос)"]])}
-      ${sel("voice", "edge_voice_uz", "Neyro ovoz (o'zb.)", [["uz-UZ-SardorNeural", "Sardor"], ["uz-UZ-MadinaNeural", "Madina"]])}
       ${inp("voice", "tts_rate", "Скорость речи (−5 медленнее … 5 быстрее)", "number", 'min="-5" max="5"')}
       ${sw("voice", "speak_text_replies", "Озвучивать ответы на написанные команды")}</div>
     <div class="card"><h3>Производительность и игры</h3>
@@ -515,6 +514,7 @@ function connect() {
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     if (ev.type === "status") setStatus(ev.state);
+    else if (ev.type === "heard") { $("#heard").textContent = (ev.ok ? "🎤 Услышал: " : "🎤 Не разобрал: ") + ev.text; }
     else if (ev.type === "record") { recording = ev.state === "on"; $("#recInfo").textContent = recording ? "идёт запись" + (ev.seconds ? " · " + fmtDur(ev.seconds) : "") : (ev.name ? "сохранено: " + ev.name : ""); if (!recording) refreshSoon(); else renderRecordings(); }
     else if (ev.type === "message") { state?.history.push(ev); addMsg(ev); }
     else if (ev.type === "data" || ev.type === "settings") refreshSoon();

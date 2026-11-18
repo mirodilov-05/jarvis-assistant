@@ -45,6 +45,8 @@ _UZ_CYR = str.maketrans({
 
 def detect_lang(text: str) -> str:
     """Guess ru/uz for typed text (speech gets its language from Whisper)."""
+    if CONFIG.get("voice", {}).get("languages", ["ru", "uz"]) == ["ru"]:
+        return "ru"
     low = text.lower()
     if re.search(r"[ўқғҳ]", low):
         return "uz"

@@ -292,3 +292,61 @@ def _live_loop(every: float) -> None:
             core.log.warning("live translate: %s", e)
             time.sleep(10)
         time.sleep(every)
+
+
+# ---------------------------------------------------------------------------
+# Audio ducking: music and video get quiet while Jarvis listens and answers
+# ---------------------------------------------------------------------------
+
+_DUCK = {"saved": {}, "depth": 0, "lock": threading.Lock()}
+
+
+def _fade(vol, start: float, end: float, ms: int = 250) -> None:
+    steps = max(1, ms // 25)
+    for i in range(1, steps + 1):
+        try:
+            vol.SetMasterVolume(max(0.0, min(1.0, start + (end - start) * i / steps)), None)
+        except Exception:  # noqa: BLE001
+            return
+        time.sleep(0.025)
+
+
+def duck(level: float = 0.15) -> None:
+    """Turn down every app that is playing sound (not Jarvis itself, not games) to `level`."""
+    import os
+
+    from pycaw.pycaw import IAudioMeterInformation
+    with _DUCK["lock"]:
+        _DUCK["depth"] += 1
+        if _DUCK["depth"] > 1:
+            return
+        me = os.getpid()
+        game = (core.CONFIG.get("_game_exe") or "").lower()
+        for s in _sessions():
+            try:
+                if s.ProcessId == me or s.Process.name().lower() in ("python.exe", "pythonw.exe", game):
+                    continue
+                if s._ctl.QueryInterface(IAudioMeterInformation).GetPeakValue() < 0.005:
+                    continue      # silent apps stay as they are
+                vol = s.SimpleAudioVolume
+                cur = vol.GetMasterVolume()
+                if cur > level:
+                    _DUCK["saved"][s.ProcessId] = cur
+                    threading.Thread(target=_fade, args=(vol, cur, level, 200), daemon=True).start()
+            except Exception:  # noqa: BLE001
+                continue
+
+
+def unduck() -> None:
+    with _DUCK["lock"]:
+        _DUCK["depth"] = max(0, _DUCK["depth"] - 1)
+        if _DUCK["depth"] or not _DUCK["saved"]:
+            return
+        saved, _DUCK["saved"] = _DUCK["saved"], {}
+    for s in _sessions():
+        try:
+            if s.ProcessId in saved:
+                vol = s.SimpleAudioVolume
+                threading.Thread(target=_fade, args=(vol, vol.GetMasterVolume(), saved[s.ProcessId], 500), daemon=True).start()
+        except Exception:  # noqa: BLE001
+            continue

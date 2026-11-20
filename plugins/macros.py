@@ -86,18 +86,21 @@ def find(text: str) -> dict | None:
 
 
 def _master_volume(level: int) -> None:
-    from ctypes import POINTER, cast
-
+    """Set the Windows master volume to level %."""
     import comtypes
-    from comtypes import CLSCTX_ALL
-    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-
+    from pycaw.pycaw import AudioUtilities
     try:
         comtypes.CoInitialize()
     except OSError:
         pass
     dev = AudioUtilities.GetSpeakers()
-    vol = cast(dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None), POINTER(IAudioEndpointVolume))
+    vol = getattr(dev, "EndpointVolume", None)
+    if vol is None:                                  # older pycaw
+        from ctypes import POINTER, cast
+
+        from comtypes import CLSCTX_ALL
+        from pycaw.pycaw import IAudioEndpointVolume
+        vol = cast(dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None), POINTER(IAudioEndpointVolume))
     vol.SetMasterVolumeLevelScalar(max(0, min(100, level)) / 100, None)
 
 
@@ -175,10 +178,13 @@ def clip(kind: str) -> Path | None:
     return random.choice(files) if files else None
 
 
-def play(kind: str) -> bool:
-    """Play a character clip (async). False if the pack has none — then the synthesiser speaks."""
+def play(kind: str, wait: bool = False) -> bool:
+    """Play a character clip (0.01 s, no synthesis). False if the pack has none — then the synthesiser speaks."""
     c = clip(kind)
     if not c:
         return False
-    threading.Thread(target=winsound.PlaySound, args=(str(c), winsound.SND_FILENAME), daemon=True).start()
+    if wait:
+        winsound.PlaySound(str(c), winsound.SND_FILENAME)
+    else:
+        threading.Thread(target=winsound.PlaySound, args=(str(c), winsound.SND_FILENAME), daemon=True).start()
     return True

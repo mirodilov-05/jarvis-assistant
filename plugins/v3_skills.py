@@ -38,6 +38,7 @@ APPS = r"(игр\w*|дискорд\w*|discord|браузер\w*|хром\w*|му
        patterns={"ru": [r"(?:сделай |убавь |прибавь |поставь )?(?:звук |громкость )?" + APPS +
                         r"\s+(тише|громче|на \d+|без звука|выключи звук|включи звук)",
                         r"(?:выключи|убери|включи|верни) звук (?:в |у )?" + APPS,
+                        r"(?:приглуши|заглуши|убавь|прибавь)\s+" + APPS + r"(?:\s+(?:на|до)\s+(\d+))?",
                         r"(?:громкость|звук) " + APPS + r"(?: на)? (\d+)"]},
        examples={"ru": ["Сделай игру тише", "Дискорд на 40", "Выключи звук в браузере"]}, priority=6)
 def app_volume(ctx: Ctx) -> str:
@@ -45,13 +46,15 @@ def app_volume(ctx: Ctx) -> str:
     app = re.search(APPS, n).group(1)
     app = "игра" if app.startswith("игр") else app
     num = re.search(r"(\d+)", n)
-    if "без звука" in n or re.search(r"(выключи|убери) звук", n):
+    if "без звука" in n or re.search(r"(выключи|убери) звук|заглуши", n):
         return _v3().app_volume(app, mute=True)
     if re.search(r"(включи|верни) звук", n):
         return _v3().app_volume(app, mute=False)
     if num:
         return _v3().app_volume(app, level=float(num.group(1)))
-    return _v3().app_volume(app, change=-30 if "тише" in n else 25)
+    if "приглуши" in n:
+        return _v3().app_volume(app, level=30)
+    return _v3().app_volume(app, change=-30 if re.search(r"тише|убавь", n) else 25)
 
 
 @skill("v3.quieter", title={"ru": "«Тише» с учётом экрана: в игре — только игра"},

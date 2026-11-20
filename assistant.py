@@ -247,7 +247,9 @@ class Speaker:
         path = os.path.join(tempfile.gettempdir(), "jarvis_tts.mp3")
         for attempt in (1, 2):
             try:
-                asyncio.run(asyncio.wait_for(edge_tts.Communicate(text, voice).save(path), timeout=6))
+                comm = edge_tts.Communicate(text, voice, rate=str(cfg("voice", "edge_rate", "+0%")),
+                                            pitch=str(cfg("voice", "edge_pitch", "+0Hz")))
+                asyncio.run(asyncio.wait_for(comm.save(path), timeout=6))
                 break
             except Exception as e:  # noqa: BLE001
                 log.warning("edge-tts attempt %d failed (%s)", attempt, type(e).__name__)
@@ -642,6 +644,40 @@ def game_watcher() -> None:
 # Microphone, wake phrases, names, voice recorder
 # ---------------------------------------------------------------------------
 
+SFX_DIR = BASE / "voices" / "sfx"
+
+
+def sfx(name: str, wait: bool = True, fallback: tuple[int, int] = (880, 90)) -> None:
+    """Short interface sound (voices/sfx/<name>.wav); a plain beep if the file is missing or sounds are off."""
+    path = SFX_DIR / f"{name}.wav"
+    if not cfg("voice", "ui_sounds", True) or not path.exists():
+        winsound.Beep(*fallback)
+        return
+    winsound.PlaySound(str(path), winsound.SND_FILENAME | (0 if wait else winsound.SND_ASYNC))
+
+
+def duck_start() -> None:
+    if core.feature("ducking"):
+        try:
+            import pcx
+            pcx.duck(float(cfg("voice", "duck_level", 0.15)))
+        except Exception:  # noqa: BLE001
+            log.exception("ducking failed")
+
+
+def duck_end_later() -> None:
+    """Bring the music back once Jarvis has finished talking."""
+    def go():
+        try:
+            time.sleep(0.3)
+            speaker.wait(60)
+            import pcx
+            pcx.unduck()
+        except Exception:  # noqa: BLE001
+            log.exception("unducking failed")
+    threading.Thread(target=go, daemon=True, name="unduck").start()
+
+
 # a voice pack replaces only acknowledgements, never answers that carry information («Сейчас 21:08»)
 _ACK = re.compile(r"^(открываю|запускаю|включаю|выключаю|закрываю|ставлю|готово|сделано|хорошо|принято|есть|выполн|"
                   r"записал|запомнил|добавил|удалил|отметил|перенёс|перенес|ищу|громче|тише|пауза|звук|"
@@ -851,15 +887,16 @@ class Listener:
         if not (core.feature("barge_in") and speaker.speaking.is_set() and vp.enrolled()):
             return False
         self.barge.append(chunk)
-        voiced = sum(self.speech_prob(c) >= self.SPEECH_ON for c in list(self.barge)[-12:])
-        if voiced < 9 or time.time() - self.barge_checked < 0.5:     # ~0.7 s of speech, check at most 2×/s
+        voiced = sum(self.speech_prob(c) >= self.SPEECH_ON for c in list(self.barge)[-8:])
+        if voiced < 5 or time.time() - self.barge_checked < 0.25:    # ~0.4 s of speech, check up to 4×/s
             return False
         self.barge_checked = time.time()
-        audio = np.concatenate(self.barge)
+        audio = np.concatenate(list(self.barge)[-10:])               # the last 0.8 s
         user = vp.user_score(audio)
         own = vp.tts_score(audio, cfg("voice", "piper_voice_ru", "dmitri")) if cfg("voice", "tts_engine_ru", "piper") == "piper" else None
-        need = vp.STRICT + 0.05 if own is None else vp.LENIENT + 0.05
-        if user is None or user < need or (own is not None and user < own + 0.15):
+        # a shorter clip is less certain: ask for a clearer win over Jarvis's own voice
+        need = vp.STRICT + 0.08 if own is None else vp.LENIENT + 0.08
+        if user is None or user < need or (own is not None and user < own + 0.2):
             return False
         log.info("Barge-in: owner %.2f vs Jarvis's voice %s — stop talking", user, f"{own:.2f}" if own is not None else "?")
         speaker.stop()
@@ -887,7 +924,7 @@ class Listener:
         speaker.wait(30)
         self.flush()
         set_status("recording")
-        winsound.Beep(988, 120)
+        sfx("rec_start", fallback=(988, 120))
         voiced: list[np.ndarray] = []
         got, t0, last_emit = 0.0, time.time(), 0.0
         core.emit({"type": "enroll", "state": "on", "seconds": 0, "need": need})
@@ -902,7 +939,7 @@ class Listener:
             if time.time() - last_emit > 1:
                 last_emit = time.time()
                 core.emit({"type": "enroll", "state": "on", "seconds": round(got), "need": need})
-        winsound.Beep(660, 120)
+        sfx("rec_stop", fallback=(660, 120))
         pieces = vp.enroll(np.concatenate(voiced)) if got >= 9 else 0
         core.emit({"type": "enroll", "state": "off", "ok": bool(pieces)})
         core.emit({"type": "settings"})
@@ -925,6 +962,13 @@ class Listener:
         log.info("Name heard in [%s]: %s", lang, text)
         if not self.owner(audio, "name"):
             return
+        duck_start()
+        try:
+            self._after_name(audio, words, idx)
+        finally:
+            duck_end_later()
+
+    def _after_name(self, audio: np.ndarray, words: list[str], idx: int) -> None:
         rest_words = words[idx + 1:]
         if len("".join(rest_words)) >= 3:
             # it's addressed to Jarvis: transcribe again, carefully, in the detected language
@@ -945,7 +989,7 @@ class Listener:
     def followup(self, depth: int) -> None:
         """Listen for an answer to Jarvis's question (no wake word needed)."""
         set_status("recording")
-        winsound.Beep(1046, 70)
+        sfx("followup", fallback=(1046, 70))
         audio = self.record_command(start_timeout=6.0)
         if audio is None:
             core.PENDING.clear()
@@ -976,19 +1020,28 @@ class Listener:
         return None
 
     def on_wake(self, retry: bool = True, keep_audio: bool = True) -> None:
+        duck_start()           # music and video get quiet while we talk
+        try:
+            self._on_wake(retry, keep_audio)
+        finally:
+            duck_end_later()
+
+    def _on_wake(self, retry: bool = True, keep_audio: bool = True) -> None:
         speaker.stop()
         set_status("recording")
         head = self._already_talking() if keep_audio else None
+        macros = _plugin("macros")
         if head is None and core.feature("wake_reply") and core.mode() != "quiet":
-            # answer out loud, like a person: "Да?", "Слушаю", "Что сделать?"
-            speaker.say(random.choice(WAKE_REPLIES.get(core.mode(), WAKE_REPLIES["polite"])), "ru")
-            speaker.wait(5)
+            # answer out loud, like a person: a ready clip from the voice pack (instant) or the synthesiser
+            if not (macros and macros.play("wake", wait=True)):
+                speaker.say(random.choice(WAKE_REPLIES.get(core.mode(), WAKE_REPLIES["polite"])), "ru")
+                speaker.wait(5)
             self.flush()
         else:
-            winsound.Beep(880, 90)
+            sfx("wake")
         audio = self.record_command(prefix=head)
         if audio is None:
-            winsound.Beep(440, 110)
+            sfx("cancel", fallback=(440, 110))
             set_status("listening")
             return
         set_status("thinking")
@@ -1002,7 +1055,7 @@ class Listener:
                 speaker.say("Не расслышал, повторите, пожалуйста." if lang == "ru" else "Eshitmadim, qaytaring.", lang)
                 speaker.wait()
                 self.flush()
-                self.on_wake(retry=False, keep_audio=False)
+                self._on_wake(retry=False, keep_audio=False)
             else:
                 set_status("listening")
             return
@@ -1196,6 +1249,25 @@ def handle(text: str, lang: str, source: str, speak: bool, echo: bool = True) ->
 # ---------------------------------------------------------------------------
 
 def open_app_window() -> None:
+    hwnd = ctypes.windll.user32.FindWindowW(None, "Джарвис")
+    if hwnd:                                   # already open (maybe hidden in the tray): just bring it back
+        ctypes.windll.user32.ShowWindow(hwnd, 9)
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
+        return
+    if cfg("assistant", "native_window", True):
+        try:
+            import importlib.util
+            if importlib.util.find_spec("webview"):
+                pyw = Path(sys.executable).with_name("pythonw.exe")
+                subprocess.Popen([str(pyw if pyw.exists() else sys.executable), str(BASE / "app_window.py")], cwd=str(BASE),
+                                 creationflags=subprocess.CREATE_NO_WINDOW)
+                return
+        except Exception:  # noqa: BLE001
+            log.exception("native window failed, using Edge")
+    _open_edge_window()
+
+
+def _open_edge_window() -> None:
     edge = next((p for p in [
         os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
         os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
@@ -1408,13 +1480,24 @@ def run_server() -> None:
             "cloud": cloud.status(),
             "remote": remote_bot.status(),
             "ui": {"accent": core.setting("ui", "accent", "cyan"), "glass": core.setting("ui", "glass", 0.72),
-                   "dim": core.setting("ui", "dim", 0.55),
+                   "dim": core.setting("ui", "dim", 0.55), "capsule_auto": bool(core.setting("ui", "capsule_auto", True)),
                    "bg": ({"url": f"/media/{bg.name}?v={int(bg.stat().st_mtime)}",
                            "kind": "video" if bg.suffix.lower() in (".mp4", ".webm") else "image"} if bg else None)},
             "packs": macros.packs() if macros else [], "pack": macros.active_pack() if macros else "",
             "focus": focus, "translate_live": _live_on(),
             "voice_enrolled": vp.enrolled(),
+            "voice": {"engine": cfg("voice", "tts_engine_ru", "piper"), "piper": cfg("voice", "piper_voice_ru", "dmitri"),
+                      "edge": cfg("voice", "edge_voice_ru", "ru-RU-DmitryNeural"), "edge_rate": cfg("voice", "edge_rate", "+0%"),
+                      "edge_pitch": cfg("voice", "edge_pitch", "+0Hz"), "ui_sounds": bool(cfg("voice", "ui_sounds", True)),
+                      "duck_level": float(cfg("voice", "duck_level", 0.15)),
+                      "piper_voices": sorted(p.name.split("-")[1] for p in VOICES_DIR.glob("ru_RU-*-medium.onnx"))},
+            "onboarded": bool(core.setting("ui", "onboarded", False)),
         }
+
+    async def say(r):
+        body = await r.json()
+        speaker.say(str(body.get("text", ""))[:300] or "Проверка голоса, сэр.", "ru")
+        return web.json_response({"ok": True})
 
     async def v3_get(_r):
         return web.json_response(await asyncio.to_thread(v3_state))
@@ -1765,7 +1848,7 @@ def run_server() -> None:
         web.delete("/api/macros/{id}", macros_delete), web.post("/api/macros/{id}/run", macros_run),
         web.post("/api/pack", pack_set), web.post("/api/translate", translate), web.post("/api/translate/live", translate_live),
         web.get("/api/remote", remote_get), web.post("/api/remote", remote_set),
-        web.post("/api/capsule", capsule), web.post("/api/window/hide", window_hide),
+        web.post("/api/capsule", capsule), web.post("/api/window/hide", window_hide), web.post("/api/say", say),
         web.get("/api/state", state), web.post("/api/command", command),
         web.post("/api/listen", listen), web.post("/api/stop", stop_speaking),
         web.post("/api/voice/{action}", voice_action),

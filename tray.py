@@ -171,22 +171,33 @@ def set_tip(text: str) -> None:
 # ---------------------------------------------------------------------------
 
 _cap_q: queue.Queue = queue.Queue()
-_cap: dict = {"thread": None, "visible": False}
+_cap: dict = {"thread": None, "visible": False, "mode": "", "hide_at": 0.0}
 STATE_TEXT = {"listening": "жду «Джарвис»", "recording": "слушаю", "thinking": "думаю", "speaking": "говорю",
               "taping": "идёт запись", "starting": "запуск"}
 STATE_COLOR = {"listening": "#4fd1ff", "recording": "#7fe3ff", "thinking": "#ffb547", "speaking": "#78aaff",
                "taping": "#ff5468", "starting": "#7890a0"}
+ACTIVE = ("recording", "thinking", "speaking")
 
 
-def toggle_capsule() -> None:
+def _ensure_capsule() -> None:
     if not _cap["thread"] or not _cap["thread"].is_alive():
         _cap["thread"] = threading.Thread(target=_capsule_loop, daemon=True, name="capsule")
         _cap["thread"].start()
-    else:
-        _cap_q.put(("toggle", None))
+
+
+def toggle_capsule() -> None:
+    """Hotkey / tray / voice: the full capsule with a box to type a command."""
+    _ensure_capsule()
+    _cap_q.put(("toggle", None))
+
+
+def _window_in_front() -> bool:
+    hwnd = _find_window()
+    return bool(hwnd) and user32.GetForegroundWindow() == hwnd
 
 
 def _capsule_loop() -> None:
+    import time
     import tkinter as tk
 
     root = tk.Tk()
@@ -196,24 +207,62 @@ def _capsule_loop() -> None:
     root.attributes("-alpha", 0.93)
     bg, fg, muted = "#0b141d", "#d6ecff", "#7b93a8"
     root.configure(bg=bg)
-    w, h = 460, 70
-    root.geometry(f"{w}x{h}+{(root.winfo_screenwidth() - w) // 2}+18")
+    W = 460
     frame = tk.Frame(root, bg=bg, highlightthickness=1, highlightbackground="#1f3445")
     frame.pack(fill="both", expand=True)
     dot = tk.Canvas(frame, width=14, height=14, bg=bg, highlightthickness=0)
-    dot.place(x=12, y=12)
     oval = dot.create_oval(2, 2, 12, 12, fill=STATE_COLOR["listening"], outline="")
     state = tk.Label(frame, text="ДЖАРВИС · жду «Джарвис»", bg=bg, fg=muted, font=("Segoe UI", 9))
-    state.place(x=32, y=8)
     close = tk.Label(frame, text="✕", bg=bg, fg=muted, font=("Segoe UI", 10), cursor="hand2")
-    close.place(x=w - 26, y=6)
-    reply = tk.Label(frame, text="", bg=bg, fg=fg, font=("Segoe UI", 10), anchor="w", justify="left",
-                     wraplength=w - 210)
-    reply.place(x=12, y=32, width=w - 200)
+    reply = tk.Label(frame, text="", bg=bg, fg=fg, font=("Segoe UI", 10), anchor="w", justify="left")
     entry = tk.Entry(frame, bg="#13212d", fg=fg, insertbackground=fg, relief="flat", font=("Segoe UI", 10))
-    entry.place(x=w - 186, y=34, width=170, height=24)
-    trans = tk.Label(frame, text="", bg=bg, fg=fg, font=("Segoe UI", 11), anchor="nw", justify="left",
-                     wraplength=w - 28)
+    trans = tk.Label(frame, text="", bg=bg, fg=fg, font=("Segoe UI", 11), anchor="nw", justify="left", wraplength=W - 28)
+    root.withdraw()
+    root.update_idletasks()
+    hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
+    GWL_EXSTYLE, NOACTIVATE, TOOLWINDOW = -20, 0x08000000, 0x00000080
+
+    def set_noactivate(on: bool) -> None:
+        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE) | TOOLWINDOW      # never in the taskbar
+        style = style | NOACTIVATE if on else style & ~NOACTIVATE
+        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+
+    def layout(mode: str, extra: int = 0) -> None:
+        """manual: status + answer + a box to type; island: a slim bar with the dot and one line of subtitles."""
+        _cap["mode"] = mode
+        for wdg in (dot, state, close, reply, entry):
+            wdg.place_forget()
+        if mode == "island":
+            w, h = 520, 40
+            dot.place(x=12, y=13)
+            state.place(x=32, y=10)
+            reply.config(wraplength=0)
+            reply.place(x=150, y=10, width=w - 162)
+            set_noactivate(True)
+        else:
+            w, h = W, 70
+            dot.place(x=12, y=12)
+            state.place(x=32, y=8)
+            close.place(x=w - 26, y=6)
+            reply.config(wraplength=w - 210)
+            reply.place(x=12, y=32, width=w - 200)
+            entry.place(x=w - 186, y=34, width=170, height=24)
+            set_noactivate(False)
+        x = (root.winfo_screenwidth() - w) // 2
+        root.geometry(f"{w}x{h + extra}+{x}+14")
+
+    def show(mode: str) -> None:
+        if not trans.cget("text"):
+            layout(mode)
+        root.deiconify()
+        root.attributes("-topmost", True)
+        _cap["visible"] = True
+        if mode == "manual":
+            entry.focus_force()
+
+    def hide(_e=None):
+        root.withdraw()
+        _cap.update(visible=False, mode="", hide_at=0.0)
 
     def send(_e=None):
         text = entry.get().strip()
@@ -225,10 +274,6 @@ def _capsule_loop() -> None:
         if m and hasattr(m, "handle"):
             threading.Thread(target=m.handle, args=(text, "ru", "текст", bool(core.setting("voice", "speak_text_replies", False))),
                              daemon=True).start()
-
-    def hide(_e=None):
-        root.withdraw()
-        _cap["visible"] = False
 
     entry.bind("<Return>", send)
     root.bind("<Escape>", hide)
@@ -242,49 +287,63 @@ def _capsule_loop() -> None:
             _cap_q.put(("event", ev))
 
     core.subscribe(on_event)
-    _cap["visible"] = True
     last = {"s": ""}
+
+    def auto_ok() -> bool:
+        """Show the island by itself only when you can't see the main window (a game, Cursor, a browser...)."""
+        return bool(core.setting("ui", "capsule_auto", True)) and (bool(core.CONFIG.get("_game_mode")) or not _window_in_front())
 
     def pump():
         try:
             while True:
                 kind, ev = _cap_q.get_nowait()
                 if kind == "toggle":
-                    if _cap["visible"]:
+                    if _cap["visible"] and _cap["mode"] == "manual":
                         hide()
                     else:
-                        root.deiconify()
-                        root.attributes("-topmost", True)
-                        _cap["visible"] = True
-                        entry.focus_force()
-                elif ev["type"] in ("status", "level"):
+                        show("manual")
+                    continue
+                t = ev["type"]
+                if t in ("status", "level"):
                     s = ev.get("state") or ev.get("s") or ""
                     if s and s != last["s"]:
                         last["s"] = s
                         dot.itemconfig(oval, fill=STATE_COLOR.get(s, "#4fd1ff"))
                         state.config(text="ДЖАРВИС · " + STATE_TEXT.get(s, s))
-                elif ev["type"] == "message" and ev.get("role") != "user":
-                    t = ev.get("text", "")
-                    reply.config(text=t if len(t) < 120 else t[:117] + "…")
-                elif ev["type"] == "translation":
+                        if s in ACTIVE:
+                            _cap["hide_at"] = 0.0
+                            if not _cap["visible"] and auto_ok():
+                                reply.config(text="")
+                                show("island")
+                        elif s == "listening" and _cap["mode"] == "island":
+                            _cap["hide_at"] = time.time() + 3.0      # disappears 3 s after the answer
+                elif t == "message" and ev.get("role") != "user":
+                    txt = ev.get("text", "")
+                    limit = 70 if _cap["mode"] == "island" else 120
+                    reply.config(text=txt if len(txt) < limit else txt[:limit - 3] + "…")
+                elif t == "message" and _cap["mode"] == "island":
+                    reply.config(text="— " + ev.get("text", "")[:60])
+                elif t == "translation":
                     text = ev.get("text", "").strip()
                     trans.config(text=text[:900])
                     lines = sum(1 + len(x) // 60 for x in text.splitlines()) or 1
-                    hh = min(420, 76 + 20 * lines)
-                    root.geometry(f"{w}x{hh}")
-                    trans.place(x=12, y=64, width=w - 24, height=hh - 72)
-                    if not _cap["visible"]:
-                        root.deiconify()
-                        root.attributes("-topmost", True)
-                        _cap["visible"] = True
-                elif ev["type"] == "translate_live" and not ev.get("on"):
+                    extra = min(350, 20 * lines + 8)
+                    layout("manual", extra)
+                    trans.place(x=12, y=64, width=W - 24, height=extra)
+                    set_noactivate(True)          # a translation never takes the keyboard away from your game
+                    root.deiconify()
+                    root.attributes("-topmost", True)
+                    _cap["visible"] = True
+                elif t == "translate_live" and not ev.get("on"):
                     trans.place_forget()
                     trans.config(text="")
-                    root.geometry(f"{w}x{h}")
-                elif ev["type"] == "game":
+                    layout("manual")
+                elif t == "game":
                     state.config(text="ДЖАРВИС · " + ("игровой режим" if ev.get("on") else "жду «Джарвис»"))
         except queue.Empty:
             pass
+        if _cap["hide_at"] and time.time() > _cap["hide_at"] and _cap["mode"] == "island":
+            hide()
         root.after(120, pump)
 
     pump()
@@ -303,3 +362,5 @@ def start() -> None:
         keyboard.add_hotkey(core.setting("hotkeys", "capsule", "ctrl+alt+space"), toggle_capsule)
     except Exception as e:  # noqa: BLE001
         log.warning("Capsule hotkey not set: %s", e)
+    if core.setting("ui", "capsule_auto", True):
+        _ensure_capsule()     # ready in the background: appears by itself when you talk to Jarvis from a game

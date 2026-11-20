@@ -240,6 +240,7 @@ FEATURES = {
     "quiet_voice":      ("Говорить тише", "Голос Джарвиса на половину громкости", False),
     "dnd":              ("Не беспокоить", "Никаких сообщений по своей инициативе, кроме будильников", False),
     "voice_lock":       ("Слушаться только моего голоса", "После «Запомни мой голос»: чужие голоса и звук из колонок не будят Джарвиса", True),
+    "ducking":          ("Приглушать музыку, когда я говорю", "Музыка и видео тише, пока Джарвис слушает и отвечает", True),
     "barge_in":         ("Перебивать голосом", "Начните говорить, пока Джарвис отвечает, — он замолчит и выслушает", True),
 }
 
@@ -259,7 +260,7 @@ DEFAULT_PROFILES = {
     "game": {"title": "Игра", "icon": "🎮", "personality": "friend",
              "features": {**_F, "wake_reply": False, "conversation": False, "briefing": False, "greeting": False,
                           "task_nudges": False, "message_alerts": False, "break_reminders": False,
-                          "water_reminders": False, "dnd": True},
+                          "water_reminders": False, "dnd": True, "ducking": False},
              "actions": [], "say": "Игровой режим. Удачи, не мешаю."},
     "rest": {"title": "Отдых", "icon": "🛋", "personality": "friend",
              "features": {**_F, "message_alerts": True, "task_nudges": False},

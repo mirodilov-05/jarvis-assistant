@@ -388,3 +388,28 @@ def watcher() -> None:
         except Exception:  # noqa: BLE001
             core.log.exception("Task watcher error")
         time.sleep(20)
+
+
+
+def find(query: str, k: int = 3, min_score: float = 0.35) -> list[dict]:
+    """Open tasks about the query by meaning («что у меня по машине» finds «записаться на ТО»)."""
+    import memory
+    items = open_tasks()
+    return [items[i] for i in memory.search(query, [t["text"] for t in items], k, min_score)]
+
+
+@skill(
+    "tasks.find",
+    title={"ru": "Найти дело по смыслу"},
+    patterns={"ru": [r"(?:найди|есть ли|есть|какие|какое) (?:у меня )?(?:дел\w*|задач\w*) (?:про|о|об|по|насчет|связанн\w* с) (.+)$",
+                     r"^что у меня (?:по|насчет|с) (.+?)\??$"]},
+    examples={"ru": ["Есть дела про машину?", "Что у меня по учёбе?"]},
+    priority=30,
+)
+def find_skill(ctx: Ctx) -> str:
+    q = ctx.group(1).strip(" ?")
+    hits = find(q, k=4, min_score=0.3)
+    if not hits:
+        return f"Открытых дел про «{q}» нет, сэр."
+    return "По этой теме: " + "; ".join(t["text"] + (f" (срок {t['due'].replace('T', ' ')})" if t.get("due") else "")
+                                         for t in hits) + "."

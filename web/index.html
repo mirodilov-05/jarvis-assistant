@@ -120,6 +120,7 @@ details[open] summary { color: rgb(var(--accent)); }
 .note { font-size: 12.5px; color: var(--muted); }
 .note a { color: rgb(var(--accent)); }
 label.lbl { font-size: 12.5px; color: var(--muted); display: block; margin-bottom: 4px; }
+label.lbl a { color: rgb(var(--accent)); }
 .sw { display: flex; align-items: flex-start; gap: 12px; padding: 6px 0; cursor: pointer; }
 .sw input { display: none; }
 .sw .t { width: 34px; height: 20px; border-radius: 10px; background: #233140; position: relative; flex-shrink: 0; margin-top: 2px; transition: .2s; }
@@ -141,6 +142,12 @@ label.lbl { font-size: 12.5px; color: var(--muted); display: block; margin-botto
 #scrim.show { display: block; }
 #toast { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); padding: 8px 16px; font-size: 13px; opacity: 0; transition: .3s; z-index: 20; pointer-events: none; }
 #toast.show { opacity: 1; }
+#onb { position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, .55); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.onb { width: min(560px, 100%); padding: 26px 28px; display: flex; flex-direction: column; gap: 14px; max-height: 92vh; overflow-y: auto; }
+.onb h2 { margin: 0; font: 600 22px "Segoe UI", sans-serif; }
+.onb .steps { display: flex; gap: 6px; } .onb .steps i { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,.1); }
+.onb .steps i.on { background: rgb(var(--accent)); }
+.onb .nav { display: flex; justify-content: space-between; margin-top: 6px; }
 @media (max-width: 1250px) { .lbl2 { display: none; } }
 @media (max-width: 1100px) { #cards { width: 270px; } #tasks { width: 250px; } #tele { font-size: 10px; } }
 @media (max-width: 900px) { #cards, #tasks, #tele { display: none; } #personas button { padding: 5px 8px; } }
@@ -208,6 +215,7 @@ label.lbl { font-size: 12.5px; color: var(--muted); display: block; margin-botto
   <div id="setBody"></div>
 </aside>
 <div id="toast" class="panel"></div>
+<div id="onb" hidden><div class="onb panel" role="dialog" aria-modal="true" aria-labelledby="onbTitle"><div id="onbBody"></div></div></div>
 
 <script>
 const $ = (s) => document.querySelector(s);
@@ -314,6 +322,20 @@ function sub(role, text) {
   subTimer = setTimeout(() => { $("#you").classList.add("fade"); $("#him").classList.add("fade"); }, role === "user" ? 20000 : 14000);
 }
 
+// ================= interface sounds =================
+let AC = null;
+function blip(f1, f2, d = 0.07, vol = 0.035) {
+  if (!V?.voice?.ui_sounds) return;
+  try {
+    AC = AC || new AudioContext();
+    const o = AC.createOscillator(), g = AC.createGain(), t0 = AC.currentTime;
+    o.type = "sine"; o.frequency.setValueAtTime(f1, t0); o.frequency.linearRampToValueAtTime(f2, t0 + d);
+    g.gain.setValueAtTime(vol, t0); g.gain.exponentialRampToValueAtTime(0.0001, t0 + d);
+    o.connect(g).connect(AC.destination); o.start(t0); o.stop(t0 + d + 0.02);
+  } catch {}
+}
+addEventListener("pointerdown", () => { try { AC = AC || new AudioContext(); AC.resume(); } catch {} }, { once: true });
+
 // ================= cards =================
 const cards = new Map();
 function card(id, title, html, ttl = 16000) {
@@ -321,7 +343,7 @@ function card(id, title, html, ttl = 16000) {
   if (!el) {
     el = document.createElement("div"); el.className = "card panel";
     el.onmouseenter = () => clearTimeout(el._t); el.onmouseleave = () => arm(el, id, 6000);
-    $("#cards").prepend(el); cards.set(id, el);
+    $("#cards").prepend(el); cards.set(id, el); blip(1250, 1560, 0.05);
     while (cards.size > 4) { const [k] = cards.keys(); drop(k); }
   }
   el.innerHTML = `<h4>${esc(title)}<button aria-label="Закрыть" onclick="drop('${id}')">✕</button></h4>${html}`;
@@ -452,7 +474,7 @@ $("#trayBtn").onclick = async () => { const r = await api("/api/window/hide", "P
 
 // ================= drawers =================
 function openDrawer(id) {
-  closeAll(); $("#" + id).classList.add("open"); $("#scrim").classList.add("show");
+  closeAll(); $("#" + id).classList.add("open"); $("#scrim").classList.add("show"); blip(700, 980, 0.06);
   if (id === "history") renderHistory();
   if (id === "macros") loadMacros();
   if (id === "settings") { loadConn(); loadProfiles(); renderSettings(); }
@@ -540,11 +562,24 @@ function renderSettings() {
     ${sw(V.startup_report, "setVal('assistant','startup_report',this.checked)", "Полный отчёт при включении", "Дела, почта, сообщения. Выключено — только приветствие")}`;
   const look = `<div class="swatches">${Object.entries(ACCENTS).map(([id, rgb]) => `<button class="${ui.accent === id ? "on" : ""}" style="background:rgb(${rgb});color:rgb(${rgb})" title="${ACCENT_NAMES[id]}" aria-label="${ACCENT_NAMES[id]}" onclick="setVal('ui','accent','${id}')"></button>`).join("")}</div>
     <div><label class="lbl">Прозрачность стекла</label><input type="range" min="0.25" max="0.95" step="0.05" value="${ui.glass}" onchange="setVal('ui','glass',+this.value)" style="padding:0"></div>
+    ${sw(ui.capsule_auto, "setVal('ui','capsule_auto',this.checked)", "Капсула сама появляется поверх игр", "Когда окно Джарвиса не на экране: точка-реактор и строка ответа сверху, исчезает через 3 с")}
     <div><label class="lbl">Фон: видео (.mp4, .webm) или картинка ${ui.bg ? "— установлен" : ""}</label>
       <input type="file" accept="video/mp4,video/webm,image/*" onchange="uploadBg(this)" style="padding:6px"></div>
     ${ui.bg ? `<div><label class="lbl">Затемнение фона</label><input type="range" min="0" max="0.9" step="0.05" value="${ui.dim}" onchange="setVal('ui','dim',+this.value)" style="padding:0"></div>
       <button class="btn danger" onclick="api('/api/bg','DELETE')">Убрать фон</button>` : ""}`;
-  const voice = `<div><label class="lbl">Голосовой пак (короткие фразы персонажа при выполнении команд)</label>
+  const vo = V.voice || {};
+  const EDGE = [["ru-RU-DmitryNeural", "Дмитрий — мужской"], ["ru-RU-SvetlanaNeural", "Светлана — женский"], ["ru-RU-DariyaNeural", "Дария — женский"]];
+  const voice = `<div><label class="lbl">Синтезатор</label><select onchange="setVal('voice','tts_engine_ru',this.value)">
+        <option value="piper" ${vo.engine === "piper" ? "selected" : ""}>Piper — офлайн, мгновенно</option>
+        <option value="edge" ${vo.engine === "edge" ? "selected" : ""}>Microsoft Neural — живее, нужен интернет</option></select></div>
+    ${vo.engine === "edge" ? `<div><label class="lbl">Голос Microsoft</label><select onchange="setVal('voice','edge_voice_ru',this.value)">${EDGE.map(([id, t]) => `<option value="${id}" ${vo.edge === id ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+      <div class="row"><div style="flex:1"><label class="lbl">Скорость: ${esc(vo.edge_rate)}</label><input type="range" min="-30" max="40" step="5" value="${parseInt(vo.edge_rate) || 0}" style="padding:0" onchange="setVal('voice','edge_rate',(this.value>=0?'+':'')+this.value+'%')"></div>
+        <div style="flex:1"><label class="lbl">Тембр: ${esc(vo.edge_pitch)}</label><input type="range" min="-20" max="20" step="2" value="${parseInt(vo.edge_pitch) || 0}" style="padding:0" onchange="setVal('voice','edge_pitch',(this.value>=0?'+':'')+this.value+'Hz')"></div></div>`
+    : `<div><label class="lbl">Голос Piper</label><select onchange="setVal('voice','piper_voice_ru',this.value)">${(vo.piper_voices || []).map((n) => `<option ${vo.piper === n ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>`}
+    <button class="btn ghost" onclick="api('/api/say','POST',{text:'Привет, сэр. Так звучит мой голос.'})">▶ Послушать</button>
+    ${sw(vo.ui_sounds, "setVal('voice','ui_sounds',this.checked)", "Звуки интерфейса", "Короткие тактические сигналы при пробуждении, ответе и в окне")}
+    <div><label class="lbl">Музыка во время разговора: ${Math.round((vo.duck_level ?? .15) * 100)}%</label><input type="range" min="0" max="0.6" step="0.05" value="${vo.duck_level ?? .15}" style="padding:0" onchange="setVal('voice','duck_level',+this.value)"></div>
+    <div><label class="lbl">Голосовой пак (короткие фразы персонажа при выполнении команд)</label>
       <select onchange="api('/api/pack','POST',{name:this.value})"><option value="">Без пака — голос Piper</option>${V.packs.map((p) => `<option ${V.pack === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select>
       <div class="note">Свои паки: папка voices\\packs\\&lt;имя&gt;\\ok, start, error с файлами .wav.</div></div>
     <div style="font-size:14px">${V.voice_enrolled ? "✅ Джарвис знает ваш голос." : "Джарвис отвечает любому голосу."}</div>
@@ -592,6 +627,39 @@ function renderSettings() {
     sec("secVoice", "Голос", voice) + sec("secBot", "Telegram-бот", bot) + sec("secModes", "Режимы и функции", modes) + sec("secConn", "Подключения", conns);
 }
 
+// ================= first run =================
+let onbStep = 0;
+function renderOnb() {
+  if (!V) return;
+  const k = V.keys, steps = `<div class="steps">${[0, 1, 2].map((i) => `<i class="${i <= onbStep ? "on" : ""}"></i>`).join("")}</div>`;
+  const pages = [
+    `<h2 id="onbTitle">Добро пожаловать, сэр</h2>
+     <div class="note" style="font-size:14px">Два бесплатных ключа — и Джарвис работает в облаке, не занимая видеокарту. Можно пропустить и добавить позже в ⚙.</div>
+     <div><label class="lbl">Groq — речь и мозг · <a href="https://console.groq.com/keys" target="_blank">console.groq.com/keys</a> ${keyState(k.groq)}</label>
+       <div class="keyrow"><input id="oGroq" type="password" placeholder="gsk_…" autocomplete="off"><button class="btn" onclick="saveKey('groq','oGroq')">Сохранить</button></div></div>
+     <div><label class="lbl">Gemini — зрение и перевод экрана · <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> ${keyState(k.gemini)}</label>
+       <div class="keyrow"><input id="oGem" type="password" placeholder="AIza…" autocomplete="off"><button class="btn" onclick="saveKey('gemini','oGem')">Сохранить</button></div></div>`,
+    `<h2 id="onbTitle">Характер и голос</h2>
+     <div class="row" style="flex-wrap:wrap">${PERSONAS.map(([id, t]) => `<button class="btn ${V.persona === id ? "" : "ghost"}" onclick="setPersona('${id}')">${t}</button>`).join("")}</div>
+     <div><label class="lbl">Синтезатор</label><select onchange="setVal('voice','tts_engine_ru',this.value)">
+       <option value="piper" ${V.voice?.engine === "piper" ? "selected" : ""}>Piper — офлайн, мгновенно</option>
+       <option value="edge" ${V.voice?.engine === "edge" ? "selected" : ""}>Microsoft Neural — живее, нужен интернет</option></select></div>
+     <div class="row"><button class="btn ghost" onclick="api('/api/say','POST',{text:'Привет, сэр. Что будем делать?'})">▶ Послушать</button>
+       <button class="btn ghost" onclick="api('/api/voice/enroll','POST');toast('Читайте текст в карточке справа')">🎙 Запомнить мой голос</button></div>
+     <div class="note">«Запомнить мой голос» — 20 секунд чтения вслух. После этого Джарвис слушается только вас и его можно перебить.</div>`,
+    `<h2 id="onbTitle">Внешний вид</h2>
+     <div class="swatches">${Object.entries(ACCENTS).map(([id, rgb]) => `<button class="${V.ui.accent === id ? "on" : ""}" style="background:rgb(${rgb});color:rgb(${rgb})" aria-label="${ACCENT_NAMES[id]}" title="${ACCENT_NAMES[id]}" onclick="setVal('ui','accent','${id}')"></button>`).join("")}</div>
+     <div><label class="lbl">Свой фон: видео .mp4/.webm или картинка (необязательно)</label><input type="file" accept="video/mp4,video/webm,image/*" onchange="uploadBg(this)" style="padding:6px"></div>
+     <div class="note">Подсказки: скажите «Эй, Джарвис». Начните печатать в любом месте окна. «/» — разделы. Ctrl+Alt+Space — капсула поверх игр.</div>`,
+  ];
+  $("#onbBody").innerHTML = steps + pages[onbStep] + `<div class="nav">
+      <button class="btn ghost" onclick="${onbStep ? "onbGo(-1)" : "onbDone()"}">${onbStep ? "Назад" : "Пропустить"}</button>
+      <button class="btn" onclick="${onbStep < 2 ? "onbGo(1)" : "onbDone()"}">${onbStep < 2 ? "Дальше" : "Готово"}</button></div>`;
+}
+window.onbGo = (d) => { onbStep = Math.max(0, Math.min(2, onbStep + d)); renderOnb(); };
+window.onbDone = async () => { $("#onb").hidden = true; await api("/api/settings", "POST", { section: "ui", key: "onboarded", value: true }); toast("Готово, сэр"); };
+function maybeOnboard() { if (V && !V.onboarded && $("#onb").hidden) { $("#onb").hidden = false; renderOnb(); } else if (!$("#onb").hidden) renderOnb(); }
+
 // ================= keyboard =================
 addEventListener("keydown", (e) => {
   if (e.key === "Escape") { closeAll(); q.blur(); q.value = ""; renderSugg(); return; }
@@ -603,7 +671,7 @@ addEventListener("keydown", (e) => {
 });
 
 // ================= data & live events =================
-async function loadV3() { V = await api("/api/v3"); applyLook(); renderHeader(); renderSettings(); }
+async function loadV3() { V = await api("/api/v3"); applyLook(); renderHeader(); renderSettings(); maybeOnboard(); }
 async function loadState() { state = await api("/api/state"); history = state.history || []; game = !!state.game?.on; setStatus(state.status); renderTasks(); }
 let refreshT;
 function refreshSoon() { clearTimeout(refreshT); refreshT = setTimeout(async () => { const h = history; await loadState(); history = h; }, 250); }
@@ -627,6 +695,7 @@ function connect() {
     else if (ev.type === "game") { game = ev.on; setStatus(); toast(ev.on ? "🎮 Игровой режим: " + ev.name : "Игровой режим выключен"); }
     else if (ev.type === "cloud" && !ev.ok) { toast("Нет связи с облаком: " + (ev.error || "")); loadV3(); }
     else if (ev.type === "vision") card("vision", "Смотрю на экран", `<img src="data:image/png;base64,${ev.thumb}" alt="" style="width:100%;border-radius:8px;border:1px solid var(--line);display:block"><div class="chip" style="margin-top:6px">${esc(ev.title)}</div>`, 20000);
+    else if (ev.type === "card") card("c_" + (ev.title || "").replace(/[^0-9a-zа-яё]/gi, "").slice(0, 20), ev.title || "", `<div class="pre">${esc(ev.text)}</div>`, ev.ttl || 0);
     else if (ev.type === "translation") card("translation", "Перевод · " + (ev.title || "окно"), `<div class="pre">${esc(ev.text)}</div>`, 0);
     else if (ev.type === "enroll") {
       if (ev.state === "on") card("enroll", "Запоминаю ваш голос", `<div style="font-size:15px;line-height:1.5">Привет, Джарвис. Сегодня я хочу спокойно закончить дела, а вечером немного поиграть. Напомни мне купить хлеб и позвонить маме. Какая завтра погода? (А теперь тише:) Джарвис, который час?</div>

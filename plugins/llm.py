@@ -88,10 +88,18 @@ def memories_for(text: str, k: int = 3) -> list[str]:
     notes_mod = sys.modules.get("jarvis_plugin_notes")
     if not notes_mod or not text:
         return []
+    out = []
     try:
-        return [n["text"] for _, n in notes_mod.find(text, k=k, min_score=0.4)]
+        out = [n["text"] for _, n in notes_mod.find(text, k=k, min_score=0.4)]
     except Exception:  # noqa: BLE001
-        return []
+        pass
+    tasks_mod = sys.modules.get("jarvis_plugin_tasks")
+    if tasks_mod and hasattr(tasks_mod, "find"):    # related open tasks are part of the "second brain" too
+        try:
+            out += ["дело: " + t["text"] for t in tasks_mod.find(text, k=2, min_score=0.45)]
+        except Exception:  # noqa: BLE001
+            pass
+    return out
 
 
 def context_text() -> str:

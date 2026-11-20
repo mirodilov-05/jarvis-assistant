@@ -204,8 +204,162 @@ MODES = {
 
 
 def mode() -> str:
-    m = CONFIG.get("assistant", {}).get("mode", "friend")
+    """Personality of the active profile: friend / work / polite."""
+    m = active_profile().get("personality") or CONFIG.get("assistant", {}).get("mode", "friend")
     return m if m in MODES else "friend"
+
+
+# ---------------------------------------------------------------------------
+# Profiles ("режимы"): each has a personality and its own set of on/off features
+# ---------------------------------------------------------------------------
+
+# Every feature Jarvis can switch per profile: key -> (title, description, default)
+FEATURES = {
+    "voice_replies":    ("Отвечать голосом", "Иначе ответы только текстом в окне", True),
+    "wake_reply":       ("Говорить «Слушаю» после имени", "Иначе короткий сигнал", True),
+    "name_listening":   ("Слышать «Джарвис» в обычной речи", "«Hey Jarvis» работает всегда", True),
+    "conversation":     ("Продолжать разговор без имени", "Можно отвечать, не говоря «Джарвис» снова", True),
+    "chat":             ("Свободный разговор с ИИ", "Вопросы, болтовня, советы", True),
+    "smart_understanding": ("Понимать свободные фразы", "ИИ переводит любую формулировку в команду", True),
+    "greeting":         ("Приветствие при включении", "", True),
+    "briefing":         ("Полный отчёт при включении", "Дела, почта, сообщения, YouTube, советы", True),
+    "due_reminders":    ("Напоминать о сроках дел", "За 10 минут и в сам срок", True),
+    "task_nudges":      ("Сводки открытых дел", "Каждые несколько часов", True),
+    "message_alerts":   ("Сообщать о новых письмах и сообщениях", "Telegram, WhatsApp, почта — только личные", False),
+    "break_reminders":  ("Напоминать о перерыве", "Каждые 50 минут работы", False),
+    "water_reminders":  ("Напоминать пить воду", "Каждые 90 минут", False),
+    "quiet_voice":      ("Говорить тише", "Голос Джарвиса на половину громкости", False),
+    "dnd":              ("Не беспокоить", "Никаких сообщений по своей инициативе, кроме будильников", False),
+}
+
+_F = {k: v[2] for k, v in FEATURES.items()}
+
+DEFAULT_PROFILES = {
+    "normal": {"title": "Обычный", "icon": "🏠", "personality": "friend", "features": dict(_F),
+               "actions": [], "say": "Обычный режим. Я рядом."},
+    "work": {"title": "Работа", "icon": "💼", "personality": "work",
+             "features": {**_F, "chat": True, "conversation": False, "message_alerts": True, "break_reminders": True,
+                          "water_reminders": True, "briefing": True},
+             "actions": [], "say": "Режим работы. Только по делу."},
+    "study": {"title": "Учёба", "icon": "📚", "personality": "polite",
+              "features": {**_F, "message_alerts": False, "task_nudges": False, "break_reminders": True,
+                           "water_reminders": True, "quiet_voice": True},
+              "actions": [], "say": "Режим учёбы. Не отвлекаю, напомню о перерыве."},
+    "game": {"title": "Игра", "icon": "🎮", "personality": "friend",
+             "features": {**_F, "wake_reply": False, "conversation": False, "briefing": False, "greeting": False,
+                          "task_nudges": False, "message_alerts": False, "break_reminders": False,
+                          "water_reminders": False, "dnd": True},
+             "actions": [], "say": "Игровой режим. Удачи, не мешаю."},
+    "rest": {"title": "Отдых", "icon": "🛋", "personality": "friend",
+             "features": {**_F, "message_alerts": True, "task_nudges": False},
+             "actions": ["https://music.yandex.ru"], "say": "Режим отдыха. Включаю музыку."},
+    "night": {"title": "Ночь", "icon": "🌙", "personality": "polite",
+              "features": {**_F, "wake_reply": False, "briefing": False, "task_nudges": False, "message_alerts": False,
+                           "break_reminders": False, "water_reminders": False, "quiet_voice": True, "dnd": True},
+              "actions": [], "say": "Ночной режим. Спокойной ночи."},
+}
+PROFILES_FILE = DATA / "profiles.json"
+_profile_cache: dict = {}
+
+
+def profiles() -> dict:
+    """All profiles: built-in defaults merged with your saved changes."""
+    if _profile_cache.get("data") is not None:
+        return _profile_cache["data"]
+    saved = load_json(PROFILES_FILE, {}) if PROFILES_FILE.exists() else {}
+    out = {}
+    for pid, base in {**DEFAULT_PROFILES, **{k: v for k, v in saved.get("profiles", {}).items() if k not in DEFAULT_PROFILES}}.items():
+        p = json.loads(json.dumps(base))
+        user = saved.get("profiles", {}).get(pid, {})
+        p.update({k: v for k, v in user.items() if k != "features"})
+        p["features"] = {**_F, **base.get("features", {}), **user.get("features", {})}
+        out[pid] = p
+    data = {"profiles": out, "active": saved.get("active", "normal"),
+            "schedule": saved.get("schedule", [{"profile": "night", "from": 23, "to": 8, "enabled": False}]),
+            "auto_game": saved.get("auto_game", True)}
+    if data["active"] not in out:
+        data["active"] = "normal"
+    _profile_cache["data"] = data
+    return data
+
+
+def save_profiles(data: dict) -> None:
+    with file_lock:
+        PROFILES_FILE.write_text(json.dumps({k: v for k, v in data.items() if not k.startswith("_")},
+                                            ensure_ascii=False, indent=2), encoding="utf-8")
+    _profile_cache["data"] = data
+    emit({"type": "profiles"})
+
+
+_overrides: dict = {}   # temporary automatic profiles: {"game": "game", "schedule": "night"}
+
+
+def set_override(source: str, pid: str | None) -> None:
+    """Automatic switch (game detected, schedule). Priority: game > schedule > your choice."""
+    before = active_profile_id()
+    if pid:
+        _overrides[source] = pid
+    else:
+        _overrides.pop(source, None)
+    after = active_profile_id()
+    if after != before:
+        log.info("Profile %s -> %s (%s)", before, after, source)
+        emit({"type": "profiles"})
+
+
+def active_profile_id() -> str:
+    data = profiles()
+    for src in ("game", "schedule"):
+        if _overrides.get(src) in data["profiles"]:
+            return _overrides[src]
+    return data["active"]
+
+
+def active_profile() -> dict:
+    data = profiles()
+    return data["profiles"].get(active_profile_id(), data["profiles"]["normal"])
+
+
+def feature(name: str) -> bool:
+    """Is this feature on in the active profile?"""
+    return bool(active_profile()["features"].get(name, _F.get(name, True)))
+
+
+def set_profile(pid: str, announce: bool = True, lang: str = "ru") -> str:
+    data = profiles()
+    if pid not in data["profiles"]:
+        return ""
+    data["active"] = pid
+    _overrides.pop("schedule", None)   # your explicit choice wins over the timetable until it changes again
+    save_profiles(data)
+    p = data["profiles"][pid]
+    run_profile_actions(p)
+    return p.get("say") or f"Режим {p['title']}."
+
+
+def run_profile_actions(p: dict) -> None:
+    """Open the apps/sites/folders listed for this profile."""
+    import os
+
+    for target in p.get("actions", []):
+        try:
+            if target.startswith(("http://", "https://", "shell:", "ms-settings:")) or Path(target).exists():
+                os.startfile(target)
+            else:
+                apps = sys.modules.get("jarvis_plugin_apps")
+                if apps:
+                    found = apps.find_app(target)
+                    if found:
+                        os.startfile(found[1])
+        except Exception:  # noqa: BLE001
+            log.exception("profile action %s failed", target)
+
+
+def set_feature(name: str, value: bool, pid: str | None = None) -> None:
+    data = profiles()
+    pid = pid or active_profile_id()
+    data["profiles"][pid]["features"][name] = bool(value)
+    save_profiles(data)
 
 
 def address(lang: str) -> str:
@@ -368,8 +522,12 @@ def set_speaker(fn: Callable[[str, str], None]) -> None:
     _speak_fn = fn
 
 
-def speak(text: str, lang: str = "ru") -> None:
+def speak(text: str, lang: str = "ru", urgent: bool = False) -> None:
+    """Jarvis talks on his own (reminders, alerts). "Не беспокоить" mutes everything except urgent ones."""
     text = styled(text, lang)
+    if (feature("dnd") and not urgent) or not feature("voice_replies"):
+        emit({"type": "message", "role": "jarvis", "text": "🔕 " + text, "lang": lang, "source": "auto"})
+        return
     emit({"type": "message", "role": "jarvis", "text": text, "lang": lang, "source": "auto"})
     _speak_fn(text, lang)
 
@@ -529,7 +687,7 @@ def route(text: str, lang: str, source: str, config: dict) -> str:
     # Smart understanding: let the AI rephrase free wording into a known command
     # ("закинь в список молоко" -> "добавь дело молоко"), then run that command.
     llm = sys.modules.get("jarvis_plugin_llm")
-    if llm and config.get("assistant", {}).get("smart_router", True) and not _rerouting.get("on"):
+    if llm and feature("smart_understanding") and not _rerouting.get("on"):
         command = llm.understand(text, lang)
         if command:
             _rerouting["on"] = True

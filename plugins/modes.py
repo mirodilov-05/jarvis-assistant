@@ -1,80 +1,165 @@
-"""Conversation modes and personal profile.
+"""Profiles ("режимы") and personality, all by voice.
 
-work   — "Режим работа": strictly on topic, clear and short, no small talk.
-friend — "Режим друг": warm, informal, keeps the conversation going.
-polite — "Вежливый режим": courteous, "Вы" and "сэр".
+Profiles: Обычный, Работа, Учёба, Игра, Отдых, Ночь (+ your own from the app).
+Each profile has a personality (friend / work / polite) and on/off features
+(see core.FEATURES). Switch: "Режим работа", "Включи режим учёбы", "Ночной режим".
+Toggle in the current mode: "Выключи напоминания о перерыве", "Включи озвучку сообщений".
 """
+
+import datetime as dt
+import re
+import time
 
 import core
 from core import Ctx, skill
 
-_SAY = {
-    "work": {"ru": "Рабочий режим. Только по делу.", "uz": "Ish rejimi. Faqat ish bo'yicha."},
-    "friend": {"ru": "Дружеский режим включён! Давай поболтаем.", "uz": "Do'stona rejim yoqildi! Gaplashamiz."},
-    "polite": {"ru": "Вежливый режим включён. К Вашим услугам, сэр.", "uz": "Hurmatli rejim yoqildi. Xizmatingizdaman, janob."},
+# spoken names -> profile id
+PROFILE_WORDS = {
+    "normal": r"обычн\w*|стандартн\w*|домашн\w*|по умолчанию",
+    "work": r"работ\w*|рабоч\w*|делов\w*|офис\w*",
+    "study": r"учеб\w*|учебн\w*|занят\w*|фокус\w*|концентрац\w*",
+    "game": r"игр\w*|игров\w*|гейм\w*",
+    "rest": r"отдых\w*|расслаб\w*|чил\w*",
+    "night": r"ноч\w*|сон|сна|спат\w*",
 }
 
+# spoken names -> feature key
+FEATURE_WORDS = [
+    ("break_reminders", r"перерыв|отдых(а)? от работы|разминк"),
+    ("water_reminders", r"вод[уыа]|пить"),
+    ("message_alerts", r"сообщени|письм|почт|уведомлени|оповещени"),
+    ("task_nudges", r"сводк|напоминани[яй] о делах|сводки дел"),
+    ("due_reminders", r"срок|напоминани[яй] о сроках|дедлайн"),
+    ("greeting", r"приветстви"),
+    ("briefing", r"отчет при включении|утренн\w* отчет|отчет при запуске|утренн\w* сводк"),
+    ("voice_replies", r"голосов\w* ответ|отвечать голосом|говорить голосом|озвучк\w* ответ|голос$"),
+    ("wake_reply", r"слушаю|ответ на имя"),
+    ("conversation", r"продолжени\w* разговор|разговор без имени|диалог"),
+    ("chat", r"болтовн|свободн\w* разговор|разговор\w* с ии"),
+    ("smart_understanding", r"умн\w* понимани|понимани\w* фраз"),
+    ("quiet_voice", r"тих\w* голос|говорить тише"),
+    ("dnd", r"не беспокоить"),
+    ("name_listening", r"слушать имя|реагировать на имя"),
+]
 
-def _set(ctx: Ctx, m: str) -> str:
-    core.save_setting("assistant", "mode", m)
-    return _SAY[m][ctx.lang]
+
+def find_profile(text: str) -> str | None:
+    data = core.profiles()
+    for pid, rx in PROFILE_WORDS.items():
+        if re.search(rf"\b({rx})", text):
+            return pid
+    for pid, p in data["profiles"].items():   # your own profiles by title
+        if p.get("title", "").lower() in text:
+            return pid
+    return None
+
+
+def find_feature(text: str) -> str | None:
+    for key, rx in FEATURE_WORDS:
+        if re.search(rx, text):
+            return key
+    return None
 
 
 @skill(
-    "modes.work",
-    title={"ru": "Режим «Работа»: кратко и по теме", "uz": "«Ish» rejimi: qisqa va aniq"},
-    patterns={"ru": [r"(режим работ\w*|рабочий режим|деловой режим|режим работа|давай по делу|включи режим работы)"],
-              "uz": [r"(ish rejim\w*|ishchan rejim)"]},
-    examples={"ru": ["Режим работа", "Давай по делу"], "uz": ["Ish rejimi"]},
+    "modes.switch",
+    title={"ru": "Включить режим (работа, учёба, игра, отдых, ночь, обычный)"},
+    patterns={"ru": [r"^(?:джарвис )?(?:включи |переключи(?:сь)? на |перейди в |активируй |давай )?(?:режим )?(.+?) режим$",
+                     r"^(?:джарвис )?(?:включи |переключи(?:сь)? на |перейди в |активируй )?режим (.+)$"]},
+    examples={"ru": ["Режим работа", "Включи режим учёбы", "Ночной режим", "Режим отдыха"]},
     priority=1,
 )
-def work(ctx: Ctx) -> str:
-    return _set(ctx, "work")
+def switch(ctx: Ctx):
+    words = ctx.group(1)
+    if re.search(r"(друг|вежлив|официальн)", words):
+        return None   # personality, handled below
+    pid = find_profile(words)
+    if not pid:
+        return None
+    return core.set_profile(pid)
 
 
 @skill(
-    "modes.friend",
-    title={"ru": "Режим «Друг»: дружеский разговор", "uz": "«Do'st» rejimi: samimiy suhbat"},
-    patterns={"ru": [r"(режим друг\w*|дружеский режим|давай как друзья|будь (мне )?другом|режим общения|давай поболтаем)"],
-              "uz": [r"(dost rejim\w*|dostona rejim|dostdek gaplash)"]},
-    examples={"ru": ["Режим друг", "Давай поболтаем"], "uz": ["Do'st rejimi"]},
-    priority=1,
-)
-def friend(ctx: Ctx) -> str:
-    return _set(ctx, "friend")
-
-
-@skill(
-    "modes.polite",
-    title={"ru": "Режим «Вежливый»: учтиво, на «Вы»", "uz": "«Hurmatli» rejim: odobli, «Siz» bilan"},
-    patterns={"ru": [r"(вежливый режим|режим вежлив\w*|официальный режим|будь вежлив\w*)"],
-              "uz": [r"(hurmatli rejim|odobli rejim|rasmiy rejim)"]},
-    examples={"ru": ["Вежливый режим"], "uz": ["Hurmatli rejim"]},
-    priority=1,
-)
-def polite(ctx: Ctx) -> str:
-    return _set(ctx, "polite")
-
-
-@skill(
-    "modes.which",
-    title={"ru": "Какой сейчас режим", "uz": "Hozir qaysi rejim"},
-    patterns={"ru": [r"какой (сейчас )?режим", r"в каком (ты )?режиме"], "uz": [r"qaysi rejim"]},
-    examples={"ru": ["Какой сейчас режим?"], "uz": ["Qaysi rejimdasan?"]},
+    "modes.list",
+    title={"ru": "Какие есть режимы и какой включён"},
+    patterns={"ru": [r"(какие|какой) (есть |у тебя |сейчас )?режим", r"в каком (ты )?режиме", r"список режимов"]},
+    examples={"ru": ["Какой сейчас режим?", "Какие есть режимы?"]},
     priority=2,
 )
-def which(ctx: Ctx) -> str:
-    name = core.MODES[core.mode()][ctx.lang]
-    return ctx.t(f"Сейчас {name} режим. Есть рабочий, дружеский и вежливый.",
-                 f"Hozir {name} rejim. Ish, do'stona va hurmatli rejimlar bor.")
+def list_modes(ctx: Ctx) -> str:
+    data = core.profiles()
+    cur = core.active_profile()
+    names = ", ".join(p["title"] for p in data["profiles"].values())
+    auto = ""
+    if core.active_profile_id() != data["active"]:
+        auto = " (включился автоматически)"
+    return f"Сейчас режим «{cur['title']}»{auto}. Есть режимы: {names}."
+
+
+@skill(
+    "modes.features",
+    title={"ru": "Что включено в этом режиме"},
+    patterns={"ru": [r"что (у тебя |сейчас )?(включено|выключено)", r"какие (функции|настройки) (включены|в этом режиме)"]},
+    examples={"ru": ["Что сейчас включено?"]},
+    priority=2,
+)
+def features(ctx: Ctx) -> str:
+    p = core.active_profile()
+    on = [core.FEATURES[k][0].lower() for k, v in p["features"].items() if v and k in core.FEATURES]
+    off = [core.FEATURES[k][0].lower() for k, v in p["features"].items() if not v and k in core.FEATURES]
+    if ctx.source == "голос":   # short spoken version: say whichever list is shorter
+        if len(off) <= len(on):
+            return f"Режим «{p['title']}»: включено {len(on)} из {len(on) + len(off)}. Выключено: {', '.join(off) or 'ничего'}."
+        return f"Режим «{p['title']}»: включено только: {', '.join(on) or 'ничего'}."
+    return f"Режим «{p['title']}». Включено: {', '.join(on) or 'ничего'}. Выключено: {', '.join(off) or 'ничего'}."
+
+
+@skill(
+    "modes.toggle",
+    title={"ru": "Включить или выключить функцию в текущем режиме"},
+    patterns={"ru": [r"^(?:джарвис )?(включи|выключи|отключи|не надо|перестань|прекрати|убери|верни|разреши|запрети)\w* (.+)$"]},
+    examples={"ru": ["Выключи напоминания о перерыве", "Включи озвучку сообщений", "Включи режим не беспокоить",
+                     "Перестань говорить голосом"]},
+    priority=9,
+)
+def toggle(ctx: Ctx):
+    verb, what = ctx.group(1), ctx.group(2)
+    key = find_feature(what)
+    if not key:
+        return None   # "включи музыку", "выключи звук" etc. belong to other skills
+    on = verb in ("включи", "верни", "разреши")
+    if key == "voice_replies" and verb in ("перестань", "прекрати"):
+        on = False
+    core.set_feature(key, on)
+    title = core.FEATURES[key][0]
+    return f"{'Включил' if on else 'Выключил'}: {title.lower()} — в режиме «{core.active_profile()['title']}»."
+
+
+@skill(
+    "modes.personality",
+    title={"ru": "Характер: друг, деловой, вежливый"},
+    patterns={"ru": [r"(режим друг\w*|дружеский режим|давай как друзья|будь (мне )?другом|давай поболтаем)",
+                     r"(вежливый режим|режим вежлив\w*|будь вежлив\w*|официальный режим|говори на вы)",
+                     r"(говори по делу|будь краток|без лишних слов|коротко отвечай)"]},
+    examples={"ru": ["Давай как друзья", "Будь вежливым", "Говори по делу"]},
+    priority=1,
+)
+def personality(ctx: Ctx) -> str:
+    n = ctx.norm
+    kind = "friend" if re.search(r"друг|друзья|поболтаем", n) else "polite" if re.search(r"вежлив|официальн|на вы", n) else "work"
+    data = core.profiles()
+    pid = core.active_profile_id()
+    data["profiles"][pid]["personality"] = kind
+    core.save_profiles(data)
+    return {"friend": "Окей, общаемся по-дружески!", "polite": "Хорошо, буду предельно вежлив, сэр.",
+            "work": "Понял. Коротко и по делу."}[kind]
 
 
 @skill(
     "modes.name",
-    title={"ru": "Запомнить, как меня зовут", "uz": "Ismimni eslab qolish"},
-    patterns={"ru": [r"^(?:джарвис )?(?:меня зовут|зови меня|называй меня|моё имя|мое имя) ([а-яa-z]+(?: [а-яa-z]+)?)$"],
-              "uz": [r"^(?:jarvis )?(?:mening ismim|meni) ([a-z]+)(?: deb chaqir\w*)?$"]},
-    examples={"ru": ["Меня зовут Мирод", "Называй меня босс"], "uz": ["Mening ismim Mirod"]},
+    title={"ru": "Запомнить, как меня зовут"},
+    patterns={"ru": [r"^(?:джарвис )?(?:меня зовут|зови меня|называй меня|моё имя|мое имя) ([а-яa-z]+(?: [а-яa-z]+)?)$"]},
+    examples={"ru": ["Меня зовут Алекс", "Называй меня босс"]},
     priority=3,
 )
 def set_name(ctx: Ctx) -> str:
@@ -83,18 +168,51 @@ def set_name(ctx: Ctx) -> str:
     name = ctx.text[pos:pos + len(raw)].strip(" .!") if pos >= 0 else raw
     name = name[:1].upper() + name[1:]
     core.save_setting("assistant", "user_name", name)
-    return ctx.t(f"Приятно познакомиться, {name}! Запомнил.", f"Tanishganimdan xursandman, {name}! Eslab qoldim.")
+    return f"Приятно познакомиться, {name}! Запомнил."
 
 
 @skill(
     "modes.whoami",
-    title={"ru": "Как меня зовут", "uz": "Ismim nima"},
-    patterns={"ru": [r"как меня зовут", r"ты знаешь как меня зовут"], "uz": [r"ismim nima", r"meni ismim"]},
-    examples={"ru": ["Как меня зовут?"], "uz": ["Ismim nima?"]},
+    title={"ru": "Как меня зовут"},
+    patterns={"ru": [r"как меня зовут", r"ты знаешь как меня зовут"]},
+    examples={"ru": ["Как меня зовут?"]},
     priority=3,
 )
 def whoami(ctx: Ctx) -> str:
     name = core.CONFIG.get("assistant", {}).get("user_name", "")
-    if not name:
-        return ctx.t("Ты ещё не сказал. Скажи: «Меня зовут …».", "Hali aytmadingiz. «Mening ismim …» deng.")
-    return ctx.t(f"Тебя зовут {name}.", f"Sizning ismingiz {name}.")
+    return f"Тебя зовут {name}." if name else "Ты ещё не сказал. Скажи: «Меня зовут …»."
+
+
+def _in_window(hour: int, frm: int, to: int) -> bool:
+    if frm == to:
+        return False
+    return (frm <= hour or hour < to) if frm > to else (frm <= hour < to)
+
+
+@core.on_start
+def scheduler() -> None:
+    """Switch profiles by the timetable you set in the app (e.g. Ночь 23 → 8, Работа 9 → 18 on weekdays)."""
+    while True:
+        try:
+            data = core.profiles()
+            now = dt.datetime.now()
+            target = None
+            for rule in data.get("schedule", []):
+                if not rule.get("enabled"):
+                    continue
+                days = rule.get("days")   # list of weekday numbers 0=Mon, or None for every day
+                if days and now.weekday() not in days:
+                    continue
+                if _in_window(now.hour, int(rule.get("from", 0)), int(rule.get("to", 0))):
+                    target = rule.get("profile")
+                    break
+            prev = core._overrides.get("schedule")
+            if target != prev:
+                core.set_override("schedule", target)
+                if target:
+                    p = data["profiles"].get(target, {})
+                    core.run_profile_actions(p)
+                    core.speak(p.get("say") or f"Режим {p.get('title', '')}.", "ru")
+        except Exception:  # noqa: BLE001
+            core.log.exception("profile scheduler")
+        time.sleep(30)

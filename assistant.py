@@ -166,6 +166,8 @@ class Speaker:
                     stream = sd.OutputStream(samplerate=chunk.sample_rate, channels=1, dtype="int16")
                     stream.start()
                 data = chunk.audio_int16_array
+                if core.feature("quiet_voice"):
+                    data = (data.astype(np.float32) * 0.45).astype(np.int16)
                 for i in range(0, len(data), 2048):
                     if self._stop.is_set():
                         break
@@ -196,6 +198,7 @@ class Speaker:
                 time.sleep(0.4)
         _mci("close jarvis")
         _mci(f'open "{path}" type mpegvideo alias jarvis')
+        _mci("setaudio jarvis volume to " + ("450" if core.feature("quiet_voice") else "1000"))
         _mci("play jarvis")
         while _mci("status jarvis mode") == "playing":
             if self._stop.is_set():
@@ -233,6 +236,7 @@ class Speaker:
             set_status("speaking")
             try:
                 sapi.Rate = int(cfg("voice", "tts_rate", 1))
+                sapi.Volume = 45 if core.feature("quiet_voice") else 100
                 engine = cfg("voice", f"tts_engine_{lang}", "piper" if lang == "ru" else "edge")
                 done = False
                 if engine == "piper" and lang == "ru":
@@ -500,6 +504,8 @@ def game_watcher() -> None:
                 GAME.update(on=playing, name=os.path.basename(path) if playing else "")
                 log.info("Game mode %s %s", "ON" if playing else "OFF", GAME["name"])
                 core.CONFIG["_game_mode"] = playing
+                if core.profiles().get("auto_game", True):
+                    core.set_override("game", "game" if playing else None)
                 core.emit({"type": "game", "on": playing, "name": GAME["name"]})
                 if playing:
                     try:  # free ~2.5 GB of video memory: unload the language model until the game ends
@@ -666,7 +672,7 @@ class Listener:
                     utter, quiet = [], 0.0
                     continue
                 # 2) "Джарвис, …" inside normal speech
-                if not cfg("wake", "name_detection", True) or (GAME["on"] and not cfg("performance", "names_in_games", True)):
+                if not core.feature("name_listening") or (GAME["on"] and not cfg("performance", "names_in_games", True)):
                     continue
                 p = self.speech_prob(chunk)
                 if p >= self.SPEECH_ON:
@@ -757,7 +763,7 @@ class Listener:
         speaker.stop()
         set_status("recording")
         head = self._already_talking() if keep_audio else None
-        if head is None and cfg("wake", "reply", True):
+        if head is None and core.feature("wake_reply"):
             # answer out loud, like a person: "Да?", "Слушаю", "Что сделать?"
             speaker.say(random.choice(WAKE_REPLIES[core.mode()]), "ru")
             speaker.wait(5)
@@ -795,6 +801,8 @@ class Listener:
             return
         if core.FOLLOWUP.is_set():  # Jarvis asked a question: listen for the answer without the wake word
             core.FOLLOWUP.clear()
+            if not (core.PENDING or core.feature("conversation")):
+                depth = 99   # "continue the conversation" is off in this mode (confirmations still work)
             if depth < int(cfg("assistant", "conversation_turns", 4 if core.mode() == "friend" else 2)):
                 speaker.wait()
                 self.flush()
@@ -948,7 +956,7 @@ def handle(text: str, lang: str, source: str, speak: bool, echo: bool = True) ->
         core.FOLLOWUP.clear()
     core.log_exchange(source, lang, text, reply)
     core.emit({"type": "message", "role": "jarvis", "text": reply, "lang": lang, "source": source})
-    if speak and reply:
+    if speak and reply and core.feature("voice_replies"):
         speaker.say(reply, lang)
     return reply
 
@@ -1002,6 +1010,7 @@ def app_state() -> dict:
         "recording_now": STATUS["state"] == "taping",
         "game": {"on": GAME["on"], "name": GAME["name"]},
         "mode": core.mode(),
+        "profile": core.active_profile_id(),
         "notes": (sys.modules["jarvis_plugin_notes"].all_notes() if "jarvis_plugin_notes" in sys.modules else []),
     }
 
@@ -1220,6 +1229,60 @@ def run_server() -> None:
         core.emit({"type": "data", "file": p.name})
         return web.json_response({"ok": True})
 
+    def _profiles_payload() -> dict:
+        data = core.profiles()
+        return {"profiles": data["profiles"], "active": data["active"], "effective": core.active_profile_id(),
+                "auto": {k: v for k, v in core._overrides.items()}, "schedule": data.get("schedule", []),
+                "auto_game": data.get("auto_game", True),
+                "features": {k: {"title": v[0], "hint": v[1]} for k, v in core.FEATURES.items()},
+                "builtin": list(core.DEFAULT_PROFILES)}
+
+    async def profiles_get(_r):
+        return web.json_response(_profiles_payload())
+
+    async def profiles_action(r):
+        import uuid
+
+        body = await r.json() if r.can_read_body else {}
+        action = r.match_info["action"]
+        data = core.profiles()
+        msg = ""
+        if action == "activate":
+            msg = await asyncio.to_thread(core.set_profile, body["id"])
+            if msg:
+                speaker.say(msg, "ru")
+        elif action == "update":
+            p = data["profiles"][body["id"]]
+            for k in ("title", "icon", "personality", "say", "actions"):
+                if k in body:
+                    p[k] = body[k]
+            if "feature" in body:
+                p["features"][body["feature"]] = bool(body["value"])
+            core.save_profiles(data)
+        elif action == "new":
+            pid = "custom_" + uuid.uuid4().hex[:6]
+            base = data["profiles"].get(body.get("base", "normal"), data["profiles"]["normal"])
+            data["profiles"][pid] = {**json.loads(json.dumps(base)), "title": body.get("title") or "Мой режим", "icon": "⭐"}
+            core.save_profiles(data)
+            msg = pid
+        elif action == "delete":
+            if body["id"] not in core.DEFAULT_PROFILES:
+                data["profiles"].pop(body["id"], None)
+                if data["active"] == body["id"]:
+                    data["active"] = "normal"
+                core.save_profiles(data)
+        elif action == "reset":
+            if body["id"] in core.DEFAULT_PROFILES:
+                data["profiles"][body["id"]] = json.loads(json.dumps(core.DEFAULT_PROFILES[body["id"]]))
+                core.save_profiles(data)
+        elif action == "schedule":
+            data["schedule"] = body["schedule"]
+            core.save_profiles(data)
+        elif action == "auto_game":
+            data["auto_game"] = bool(body["value"])
+            core.save_profiles(data)
+        return web.json_response({"ok": True, "message": msg, **_profiles_payload()})
+
     async def notes_add(r):
         body = await r.json()
         sys.modules["jarvis_plugin_notes"].add_note(body["text"].strip())
@@ -1272,6 +1335,7 @@ def run_server() -> None:
         web.post("/api/settings", settings), web.post("/api/reload", reload),
         web.get("/api/dictation/{name}", dictation), web.post("/api/open-folder", open_folder),
         web.get("/api/connections", conn_state), web.post("/api/connections/{action}", conn_action),
+        web.get("/api/profiles", profiles_get), web.post("/api/profiles/{action}", profiles_action),
         web.post("/api/notes", notes_add), web.delete("/api/notes/{idx}", notes_delete),
         web.post("/api/record/start", record_start), web.post("/api/record/stop", record_stop),
         web.get("/api/recording/{name}", recording_file), web.delete("/api/recording/{name}", recording_delete),

@@ -359,22 +359,24 @@ def watcher() -> None:
                     continue
                 due = dt.datetime.fromisoformat(t["due"])
                 lang = t.get("lang", "ru")
+                if not core.feature("due_reminders"):
+                    continue
                 if not t.get("pre_notified") and before and dt.timedelta(0) < due - n <= dt.timedelta(minutes=before):
                     update_task(t["id"], pre_notified=True)
                     mins = max(1, int((due - n).total_seconds() // 60))
                     core.speak(f"{honor_ru.capitalize()}, через {mins} мин.: {t['text']}." if lang == "ru"
-                               else f"{mins} daqiqadan keyin: {t['text']}.", lang)
+                               else f"{mins} daqiqadan keyin: {t['text']}.", lang, urgent=True)
                 elif due <= n and not t.get("notified"):
                     update_task(t["id"], notified=True, last_nag=n.isoformat(timespec="minutes"))
                     core.speak(f"{honor_ru.capitalize()}, пора: {t['text']}." if lang == "ru"
-                               else f"Vaqt bo'ldi: {t['text']}.", lang)
+                               else f"Vaqt bo'ldi: {t['text']}.", lang, urgent=True)
                 elif due <= n and active and nag_h > 0:
                     last = dt.datetime.fromisoformat(t.get("last_nag") or t["due"])
                     if n - last >= dt.timedelta(hours=nag_h):
                         update_task(t["id"], last_nag=n.isoformat(timespec="minutes"))
                         core.speak(f"{honor_ru.capitalize()}, напоминаю: дело «{t['text']}» ещё не выполнено." if lang == "ru"
                                    else f"Eslatma: «{t['text']}» hali bajarilmagan.", lang)
-            if nudge_h > 0 and active and time.time() - last_nudge >= nudge_h * 3600:
+            if nudge_h > 0 and active and core.feature("task_nudges") and time.time() - last_nudge >= nudge_h * 3600:
                 last_nudge = time.time()
                 if open_tasks():
                     lang = core.CONFIG.get("assistant", {}).get("greeting_lang", "ru")

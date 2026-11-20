@@ -81,6 +81,8 @@
   pre.dict { white-space: pre-wrap; background: var(--panel2); padding: 12px; border-radius: 8px; max-height: 50vh; overflow: auto; }
   .modes { display: flex; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 2px; }
   .modes button { background: none; border: 0; color: var(--muted); padding: 6px 10px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 13px; }
+  .modes { max-width: 52vw; overflow-x: auto; }
+  .modes button { white-space: nowrap; }
   .modes button.on { background: var(--accent2); color: #001018; font-weight: 600; }
   .dayhead { color: var(--accent); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 10px 2px 4px; }
   .dayhead.overdue { color: var(--bad); }
@@ -96,6 +98,7 @@
   <div class="brand"><div id="orb" class="orb"></div><div><h1>JARVIS</h1><small id="statusText">запуск…</small></div></div>
   <nav id="nav">
     <button data-s="chat" class="active">💬 Чат</button>
+    <button data-s="profiles">🎛 Режимы</button>
     <button data-s="tasks">✅ Дела <span class="badge" id="taskBadge"></span></button>
     <button data-s="reminders">⏰ Напоминания <span class="badge" id="remBadge"></span></button>
     <button data-s="notes">🗒 Заметки</button>
@@ -112,15 +115,24 @@
 <main>
   <header>
     <h2 id="title">Чат</h2><div class="spacer"></div>
-    <div class="modes" id="modes">
-      <button data-m="work" title="Строго по теме, кратко">💼 Работа</button>
-      <button data-m="friend" title="Тепло, на «ты», продолжает разговор">🤝 Друг</button>
-      <button data-m="polite" title="Учтиво, на «Вы»">🎩 Вежливый</button>
-    </div>
+    <div class="modes" id="modes"></div>
     <button class="btn ghost" id="briefBtn" title="Голосовой отчёт">📋 Отчёт</button>
     <button class="btn ghost" id="stopBtn" title="Замолчать">🔇 Стоп</button>
     <button class="btn" id="talkBtn">🎤 Говорить</button>
   </header>
+
+  <section id="profiles" class="section">
+    <div class="card"><h3>Режимы</h3>
+      <div class="grid2" id="profCards" style="grid-template-columns:repeat(auto-fill,minmax(170px,1fr))"></div>
+      <div class="row" style="margin-top:10px"><input type="text" id="newProfName" placeholder="Название своего режима" style="max-width:260px">
+        <button class="btn ghost" id="newProfBtn">＋ Создать режим</button>
+        <label class="switch" style="margin:0 0 0 auto"><input type="checkbox" id="autoGame"> Включать «Игру» автоматически, когда запущена игра</label></div>
+      <p class="hint">Голосом: «Режим работа», «Включи режим учёбы», «Ночной режим», «Какой сейчас режим?», «Что сейчас включено?», «Выключи напоминания о перерыве», «Включи не беспокоить».</p></div>
+    <div class="card" id="profEditor"></div>
+    <div class="card"><h3>Расписание (режим включается сам)</h3><div class="list" id="schedList"></div>
+      <div class="row" style="margin-top:8px"><button class="btn ghost" id="schedAdd">＋ Добавить правило</button><button class="btn" id="schedSave">Сохранить расписание</button></div>
+      <p class="hint">Например: «Ночь» с 23 до 8 каждый день, «Работа» с 9 до 18 по будням. Если вы сами выбрали режим — он действует до следующего правила.</p></div>
+  </section>
 
   <section id="chat" class="section active">
     <div id="messages"></div>
@@ -195,7 +207,7 @@
 <script>
 const $ = (s) => document.querySelector(s);
 const STATUS = { taping: "🔴 идёт запись", listening: "слушаю", recording: "говорите…", thinking: "думаю…", speaking: "говорю", starting: "запуск…" };
-const TITLES = { notes: "Заметки", recordings: "Записи", chat: "Чат", tasks: "Дела", reminders: "Напоминания", connections: "Подключения", links: "Ссылки и программы", skills: "Что я умею", dictations: "Диктовки", settings: "Настройки" };
+const TITLES = { profiles: "Режимы и функции", notes: "Заметки", recordings: "Записи", chat: "Чат", tasks: "Дела", reminders: "Напоминания", connections: "Подключения", links: "Ссылки и программы", skills: "Что я умею", dictations: "Диктовки", settings: "Настройки" };
 let state = null;
 
 function toast(t) { const el = $("#toast"); el.textContent = t; el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 2200); }
@@ -283,10 +295,72 @@ function renderNotes() {
 }
 window.delNote = async (i) => { await api(`/api/notes/${i}`, "DELETE"); };
 $("#noteAdd").onclick = async () => { const t = $("#noteText").value.trim(); if (!t) return; await api("/api/notes", "POST", { text: t }); $("#noteText").value = ""; toast("Сохранено"); };
-function renderMode() { document.querySelectorAll("#modes button").forEach((b) => b.classList.toggle("on", b.dataset.m === state.mode)); }
-document.querySelectorAll("#modes button").forEach((b) => b.onclick = async () => {
-  state.mode = b.dataset.m; renderMode(); await api("/api/settings", "POST", { section: "assistant", key: "mode", value: b.dataset.m });
-});
+// ---- profiles (modes) ----
+let prof = null, editing = null;
+const PERS = [["friend", "🤝 Друг — тепло, на «ты»"], ["work", "💼 Деловой — кратко и по теме"], ["polite", "🎩 Вежливый — учтиво, на «Вы»"]];
+const DAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+async function loadProfiles() { prof = await api("/api/profiles"); editing = editing && prof.profiles[editing] ? editing : prof.effective; renderProfiles(); }
+async function pAct(action, body) { prof = await api(`/api/profiles/${action}`, "POST", body); renderProfiles(); return prof; }
+window.pAct = pAct;
+function renderMode() {
+  if (!prof) return;
+  $("#modes").innerHTML = Object.entries(prof.profiles).map(([id, p]) =>
+    `<button class="${id === prof.effective ? "on" : ""}" title="${esc(p.title)}" onclick="pAct('activate',{id:'${id}'})">${p.icon || "⭐"} ${esc(p.title)}</button>`).join("");
+}
+window.editProfile = (id) => { editing = id; renderProfiles(); };
+function renderProfiles() {
+  if (!prof) return;
+  renderMode();
+  $("#autoGame").checked = prof.auto_game;
+  $("#profCards").innerHTML = Object.entries(prof.profiles).map(([id, p]) => {
+    const on = Object.values(p.features).filter(Boolean).length;
+    const auto = id === prof.effective && id !== prof.active ? " · авто" : "";
+    const pers = (PERS.find((x) => x[0] === p.personality) || ["", ""])[1].split(" — ")[0];
+    return `<div class="item" style="flex-direction:column;align-items:flex-start;cursor:pointer;border-color:${id === editing ? "var(--accent)" : "transparent"}" onclick="editProfile('${id}')">
+      <div style="font-size:22px">${p.icon || "⭐"}</div><b>${esc(p.title)}</b>
+      <span class="muted" style="font-size:12px">${pers} · функций: ${on}${auto}</span>
+      ${id === prof.effective ? `<span class="chip" style="background:#065f46;color:#a7f3d0">сейчас включён</span>`
+        : `<button class="btn ghost" style="padding:4px 10px" onclick="event.stopPropagation();pAct('activate',{id:'${id}'})">Включить</button>`}</div>`;
+  }).join("");
+  const id = editing, p = prof.profiles[id];
+  if (!p) return;
+  const feats = Object.entries(prof.features).map(([k, f]) => `<label class="switch" title="${esc(f.hint)}">
+      <input type="checkbox" ${p.features[k] ? "checked" : ""} onchange="pAct('update',{id:'${id}',feature:'${k}',value:this.checked})">
+      <span>${esc(f.title)}${f.hint ? `<br><span class="muted" style="font-size:12px">${esc(f.hint)}</span>` : ""}</span></label>`).join("");
+  const actionsText = esc((p.actions || []).join("\n"));
+  $("#profEditor").innerHTML = `<h3>${p.icon || "⭐"} Настройки режима «${esc(p.title)}»</h3>
+    <div class="grid2">
+      <div><div class="field"><label>Название</label><input type="text" value="${esc(p.title)}" onchange="pAct('update',{id:'${id}',title:this.value})"></div>
+        <div class="field"><label>Значок (эмодзи)</label><input type="text" value="${esc(p.icon || "")}" maxlength="4" onchange="pAct('update',{id:'${id}',icon:this.value})"></div>
+        <div class="field"><label>Характер</label><select onchange="pAct('update',{id:'${id}',personality:this.value})">${PERS.map(([val, t]) =>
+          `<option value="${val}" ${p.personality === val ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+        <div class="field"><label>Что сказать при включении</label><input type="text" value="${esc(p.say || "")}" onchange="pAct('update',{id:'${id}',say:this.value})"></div>
+        <div class="field"><label>Открыть при включении (программы, сайты, папки — каждое с новой строки)</label>
+          <textarea rows="3" id="profActions">${actionsText}</textarea>
+          <span class="hint">Например: telegram · https://mail.google.com · C:\Users\…\Documents</span></div>
+        <div class="row">${prof.builtin.includes(id) ? `<button class="btn ghost" onclick="if(confirm('Вернуть настройки режима по умолчанию?'))pAct('reset',{id:'${id}'})">↺ Сбросить</button>`
+          : `<button class="btn ghost" onclick="if(confirm('Удалить режим?')){editing=null;pAct('delete',{id:'${id}'})}">🗑 Удалить режим</button>`}</div></div>
+      <div><label class="muted" style="font-size:12px">Функции — включайте и выключайте:</label>${feats}</div>
+    </div>`;
+  $("#profActions").onchange = (e) => pAct("update", { id, actions: e.target.value.split("\n").map((x) => x.trim()).filter(Boolean) });
+  $("#schedList").innerHTML = (prof.schedule || []).map((r, i) => `<div class="item" data-i="${i}">
+      <input type="checkbox" class="s-en" ${r.enabled ? "checked" : ""} title="Включено">
+      <select class="s-prof">${Object.entries(prof.profiles).map(([pid, pp]) => `<option value="${pid}" ${pid === r.profile ? "selected" : ""}>${esc(pp.title)}</option>`).join("")}</select>
+      с <input class="s-from" type="number" min="0" max="23" value="${r.from}" style="width:64px"> до <input class="s-to" type="number" min="0" max="23" value="${r.to}" style="width:64px">
+      <span class="s-days">${DAYS.map((d, di) => `<label style="font-size:12px"><input type="checkbox" value="${di}" ${!r.days || r.days.includes(di) ? "checked" : ""}>${d}</label>`).join(" ")}</span>
+      <button class="icon" onclick="this.closest('.item').remove()">✕</button></div>`).join("") || `<div class="muted">Правил нет</div>`;
+}
+function readSchedule() {
+  return [...document.querySelectorAll("#schedList .item")].map((el) => {
+    const days = [...el.querySelectorAll(".s-days input:checked")].map((x) => +x.value);
+    return { enabled: el.querySelector(".s-en").checked, profile: el.querySelector(".s-prof").value,
+             from: +el.querySelector(".s-from").value, to: +el.querySelector(".s-to").value, days: days.length === 7 ? null : days };
+  });
+}
+$("#schedAdd").onclick = () => { prof.schedule = [...readSchedule(), { enabled: true, profile: "work", from: 9, to: 18, days: [0, 1, 2, 3, 4] }]; renderProfiles(); };
+$("#schedSave").onclick = async () => { await pAct("schedule", { schedule: readSchedule() }); toast("Расписание сохранено"); };
+$("#autoGame").onchange = (e) => pAct("auto_game", { value: e.target.checked });
+$("#newProfBtn").onclick = async () => { const r = await pAct("new", { title: $("#newProfName").value.trim(), base: editing || "normal" }); editing = r.message; $("#newProfName").value = ""; renderProfiles(); };
 
 // ---- reminders ----
 function renderReminders() {
@@ -514,6 +588,7 @@ function connect() {
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     if (ev.type === "status") setStatus(ev.state);
+    else if (ev.type === "profiles") loadProfiles();
     else if (ev.type === "heard") { $("#heard").textContent = (ev.ok ? "🎤 Услышал: " : "🎤 Не разобрал: ") + ev.text; }
     else if (ev.type === "record") { recording = ev.state === "on"; $("#recInfo").textContent = recording ? "идёт запись" + (ev.seconds ? " · " + fmtDur(ev.seconds) : "") : (ev.name ? "сохранено: " + ev.name : ""); if (!recording) refreshSoon(); else renderRecordings(); }
     else if (ev.type === "message") { state?.history.push(ev); addMsg(ev); }
@@ -524,6 +599,7 @@ function connect() {
   ws.onclose = () => { setStatus("starting"); setTimeout(() => { connect(); load(); }, 2000); };
 }
 load().then(connect);
+loadProfiles();
 loadConn();
 setInterval(() => state && (renderTasks()), 60000);
 </script>

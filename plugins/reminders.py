@@ -179,7 +179,7 @@ def scheduler() -> None:
                     prefix = ("Напоминание" + (" (пропущенное)" if late else "")) if r["lang"] == "ru" \
                         else ("Eslatma" + (" (o'tkazib yuborilgan)" if late else ""))
                     msg = f"{prefix}: {r['text']}"
-                core.speak(msg, r["lang"])
+                core.speak(msg, r["lang"], urgent=True)
                 core.log_exchange("напоминание", r["lang"], "-", msg)
         except Exception:  # noqa: BLE001
             core.log.exception("Reminder scheduler error")

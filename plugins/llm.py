@@ -250,6 +250,8 @@ def understand(text: str, lang: str) -> str | None:
     priority=999,
 )
 def chat(ctx: Ctx) -> str:
+    if not core.feature("chat"):
+        return f"Свободный разговор выключен в режиме «{core.active_profile()['title']}». Команды работают."
     max_tokens, sentences = LIMITS[core.mode()]
     if ctx.source == "голос" and provider() == "local" and not model_loaded():
         core.speak("Секунду…" if ctx.lang == "ru" else "Bir soniya…", ctx.lang)   # model is loading (e.g. after a game)

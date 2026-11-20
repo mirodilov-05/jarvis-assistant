@@ -123,13 +123,13 @@ def report_skill(ctx: Ctx) -> str:
 @core.on_start
 def brief_on_start() -> None:
     a = core.CONFIG.get("assistant", {})
-    if not a.get("greet_on_start", True):
+    if not core.feature("greeting") or not a.get("greet_on_start", True):
         return
     time.sleep(6)
     if core.CONFIG.get("_game_mode"):
         return  # you're playing: don't talk over the game
     lang = a.get("greeting_lang", "ru")
-    if a.get("briefing_on_start", True):
+    if core.feature("briefing") and a.get("briefing_on_start", True):
         core.speak(build(lang, greet=True), lang)
     else:
         core.speak(_mod("greeting").greeting(lang), lang)

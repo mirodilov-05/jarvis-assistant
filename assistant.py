@@ -762,8 +762,10 @@ class Listener:
     def speech_prob(self, chunk: np.ndarray) -> float:
         return float(self.vad.predict(chunk, frame_size=640))
 
-    def record_command(self, start_timeout: float = 7.0, silence: float = 1.0, max_len: float = 25.0, prefix=None):
+    def record_command(self, start_timeout: float = 7.0, silence: float | None = None, max_len: float = 25.0, prefix=None):
         """Record one utterance using the neural VAD (doesn't cut quiet words or short pauses)."""
+        if silence is None:   # how long a pause means «I'm done» — shorter = faster answers
+            silence = float(cfg("voice", "end_silence", 0.75))
         chunks: list[np.ndarray] = []
         pre = collections.deque(maxlen=6)          # 0.48 s pre-roll
         started, quiet, voiced, t0 = False, 0.0, 0, time.time()

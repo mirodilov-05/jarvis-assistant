@@ -28,9 +28,14 @@ def youtube_search(query: str) -> str:
     return run_skill("apps.youtube", f"найди на ютубе {query}")
 
 
-@tool("play_music", "Включить музыку в Яндекс Музыке. Без query — просто открыть музыку; с query — найти песню/исполнителя/жанр.",
+@tool("play_music", "Включить музыку — она сразу начинает играть. Без query — любимый микс; с query — песня, исполнитель "
+      "или настроение («для работы», «спокойное»).",
       {"query": {**S, "description": "Песня, исполнитель или настроение (необязательно)"}})
 def play_music(query: str = "") -> str:
+    import sys
+    music = sys.modules.get("jarvis_plugin_music")
+    if music:
+        return music.play(query)
     return run_skill("apps.music", f"включи песню {query}" if query else "включи музыку")
 
 

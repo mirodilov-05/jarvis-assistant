@@ -55,6 +55,7 @@ for noisy in ("httpx", "httpcore", "faster_whisper", "telethon", "comtypes", "ur
 log = logging.getLogger("jarvis")
 
 import core  # noqa: E402
+import voiceprint as vp  # noqa: E402
 from oww_compat import Model  # noqa: E402
 
 SAMPLE_RATE = 16000
@@ -203,10 +204,15 @@ class Speaker:
         rate = int(cfg("voice", "tts_rate", 1))
         syn = SynthesisConfig(length_scale=max(0.6, 1.0 - rate * 0.04), noise_scale=0.6, noise_w_scale=0.7)
         stream = None
+        vname = cfg("voice", "piper_voice_ru", "dmitri")
         try:
             for chunk in voice.synthesize(text, syn_config=syn):   # one chunk per sentence: starts talking at once
                 if self._stop.is_set():
                     break
+                if f"tts_{vname}" not in vp._load() and len(chunk.audio_int16_array) > chunk.sample_rate * 1.2:
+                    # remember how Jarvis's own voice sounds, so barge-in doesn't react to it
+                    threading.Thread(target=vp.set_tts_voice, args=(vname, chunk.audio_int16_array, chunk.sample_rate),
+                                     daemon=True).start()
                 if stream is None:
                     stream = sd.OutputStream(samplerate=chunk.sample_rate, channels=1, dtype="int16")
                     stream.start()
@@ -576,6 +582,7 @@ def game_watcher() -> None:
 # Microphone, wake phrases, names, voice recorder
 # ---------------------------------------------------------------------------
 
+_HUSH = r"(стоп|хватит|замолчи|молчи|тихо|тише|достаточно|понял|поняла|ладно|спасибо|ок|окей|все|ясно|джарвис)"
 _DICTATE_START = re.compile(r"(начни|включи|начать) диктовку|diktovka\w* (boshla|yoq)")
 _DICTATE_STOP = re.compile(r"(закончи|останови|стоп|хватит)\s*(диктовку)?|diktovka\w* (tugat|toxtat)|tugat|toxtat")
 _RECORD_STOP = re.compile(r"^(джарвис |jarvis )?(стоп|stop|хватит|останови|закончи|заверши|сохрани|toxtat|toxta|bas|tamom)\w*"
@@ -620,6 +627,8 @@ class Listener:
         self.agc = AGC(max_gain=float(cfg("voice", "max_gain", 20)))
         self.manual = threading.Event()
         self.recent = collections.deque(maxlen=25)   # last 2 s of audio for wake-word verification
+        self.barge = collections.deque(maxlen=15)    # last 1.2 s while Jarvis talks (barge-in)
+        self.barge_checked = 0.0
 
     def _callback(self, indata, frames, t, status) -> None:
         LEVEL["v"] = float(np.abs(indata).mean())   # for the HUD reactor; ~1 µs
@@ -696,6 +705,11 @@ class Listener:
                     self.voice_record(core.RECORD_LANG.get("lang", "ru"))
                     utter, quiet = [], 0.0
                     continue
+                if core.ENROLL_REQUEST.is_set():
+                    core.ENROLL_REQUEST.clear()
+                    self.enroll_voice()
+                    utter, quiet = [], 0.0
+                    continue
                 if self.manual.is_set():
                     self.manual.clear()
                     self.on_wake()
@@ -704,7 +718,10 @@ class Listener:
                 if speaker.busy():
                     utter, quiet = [], 0.0
                     self.recent.clear()
+                    if self.barge_in(chunk):
+                        self.barge.clear()
                     continue
+                self.barge.clear()
                 self.recent.append(chunk)
                 # 1) "Hey Jarvis" & co. — instant, then double-checked by speech recognition
                 scores = self.wake.predict(chunk)
@@ -747,7 +764,85 @@ class Listener:
         words = re.findall(r"[\w'ʻ’]+", text)
         ok = any(is_jarvis(w) for w in words) or bool(re.search(r"(алекс|alex|mycroft|майкр)", text, re.I)) or score >= 0.8
         log.info("Wake phrase %s (%.2f) heard as %r -> %s", name, score, text, "accepted" if ok else "ignored")
+        return ok and self.owner(audio, "wake phrase")
+
+    def owner(self, audio: np.ndarray, what: str) -> bool:
+        """Voice lock: is this the owner speaking? (always yes until «Запомни мой голос»; stricter in games)"""
+        if not core.feature("voice_lock"):
+            return True
+        ok, score = vp.is_owner(audio, strict=GAME["on"])
+        if score is not None:
+            core.CONFIG["_last_voice_score"] = score
+            log.info("Voice check (%s): %.2f -> %s", what, score, "owner" if ok else "someone else, ignored")
         return ok
+
+    def barge_in(self, chunk: np.ndarray) -> bool:
+        """While Jarvis talks: if the OWNER starts speaking, stop talking and listen. True if it took over."""
+        if not (core.feature("barge_in") and speaker.speaking.is_set() and vp.enrolled()):
+            return False
+        self.barge.append(chunk)
+        voiced = sum(self.speech_prob(c) >= self.SPEECH_ON for c in list(self.barge)[-12:])
+        if voiced < 9 or time.time() - self.barge_checked < 0.5:     # ~0.7 s of speech, check at most 2×/s
+            return False
+        self.barge_checked = time.time()
+        audio = np.concatenate(self.barge)
+        user = vp.user_score(audio)
+        own = vp.tts_score(audio, cfg("voice", "piper_voice_ru", "dmitri")) if cfg("voice", "tts_engine_ru", "piper") == "piper" else None
+        need = vp.STRICT + 0.05 if own is None else vp.LENIENT + 0.05
+        if user is None or user < need or (own is not None and user < own + 0.15):
+            return False
+        log.info("Barge-in: owner %.2f vs Jarvis's voice %s — stop talking", user, f"{own:.2f}" if own is not None else "?")
+        speaker.stop()
+        set_status("recording")
+        audio = self.record_command(prefix=list(self.barge), silence=0.8)
+        if audio is None:
+            set_status("listening")
+            return True
+        set_status("thinking")
+        text, lang, reliable = transcribe(audio, accurate=True)
+        words = core.normalize(text or "", "ru").split()
+        if not text or not reliable or (len(words) <= 3 and all(re.fullmatch(_HUSH, w) for w in words)):
+            set_status("listening")      # "стоп", "хватит", "понял" — just be quiet
+            return True
+        core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": "голос"})
+        self.process(text, lang)
+        self.flush()
+        return True
+
+    def enroll_voice(self) -> None:
+        """«Запомни мой голос»: ~20 s of the owner's speech -> voiceprint."""
+        need, limit = 20.0, 75.0
+        speaker.say("Запоминаю ваш голос. Говорите со мной секунд двадцать: прочитайте текст в окне или расскажите, "
+                    "как прошёл день. В конце можно сказать пару фраз тише, как вы иногда говорите.", "ru")
+        speaker.wait(30)
+        self.flush()
+        set_status("recording")
+        winsound.Beep(988, 120)
+        voiced: list[np.ndarray] = []
+        got, t0, last_emit = 0.0, time.time(), 0.0
+        core.emit({"type": "enroll", "state": "on", "seconds": 0, "need": need})
+        while got < need and time.time() - t0 < limit:
+            try:
+                chunk = self.agc(self.frames.get(timeout=1))
+            except queue.Empty:
+                continue
+            if self.speech_prob(chunk) >= self.SPEECH_OFF:
+                voiced.append(chunk)
+                got += 0.08
+            if time.time() - last_emit > 1:
+                last_emit = time.time()
+                core.emit({"type": "enroll", "state": "on", "seconds": round(got), "need": need})
+        winsound.Beep(660, 120)
+        pieces = vp.enroll(np.concatenate(voiced)) if got >= 9 else 0
+        core.emit({"type": "enroll", "state": "off", "ok": bool(pieces)})
+        core.emit({"type": "settings"})
+        if pieces:
+            msg = "Готово, запомнил ваш голос. Теперь я слушаюсь только вас."
+        else:
+            msg = "Мало речи, не получилось. Скажите «Запомни мой голос» ещё раз и говорите подольше."
+        core.emit({"type": "message", "role": "jarvis", "text": msg, "lang": "ru", "source": "голос"})
+        speaker.say(msg, "ru")
+        set_status("listening")
 
     def check_names(self, audio: np.ndarray) -> None:
         text, lang, reliable = transcribe(audio, accurate=False)
@@ -758,6 +853,8 @@ class Listener:
         if idx is None:
             return
         log.info("Name heard in [%s]: %s", lang, text)
+        if not self.owner(audio, "name"):
+            return
         rest_words = words[idx + 1:]
         if len("".join(rest_words)) >= 3:
             # it's addressed to Jarvis: transcribe again, carefully, in the detected language
@@ -782,6 +879,9 @@ class Listener:
         audio = self.record_command(start_timeout=6.0)
         if audio is None:
             core.PENDING.clear()
+            set_status("listening")
+            return
+        if not self.owner(audio, "follow-up"):     # e.g. TV or a friend answered instead of you
             set_status("listening")
             return
         text, lang, reliable = transcribe(audio, accurate=True)
@@ -822,6 +922,10 @@ class Listener:
             set_status("listening")
             return
         set_status("thinking")
+        if vp.enrolled():   # remember how sure we are it's you («Ты узнаёшь мой голос?»); never blocks a command
+            score = vp.user_score(audio)
+            if score is not None:
+                core.CONFIG["_last_voice_score"] = score
         text, lang, reliable = transcribe(audio, accurate=True)
         if not text or not reliable:
             if retry:
@@ -1057,6 +1161,7 @@ def app_state() -> dict:
         "game": {"on": GAME["on"], "name": GAME["name"]},
         "mode": core.mode(),
         "profile": core.active_profile_id(),
+        "voice_enrolled": vp.enrolled(),
         "notes": (sys.modules["jarvis_plugin_notes"].all_notes() if "jarvis_plugin_notes" in sys.modules else []),
     }
 
@@ -1214,6 +1319,15 @@ def run_server() -> None:
         if LISTENER:
             LISTENER.manual.set()
         return web.json_response({"ok": True})
+
+    async def voice_action(r):
+        action = r.match_info["action"]
+        if action == "enroll":
+            core.ENROLL_REQUEST.set()
+        elif action == "forget":
+            vp.forget()
+            core.emit({"type": "settings"})
+        return web.json_response({"enrolled": vp.enrolled()})
 
     async def stop_speaking(_r):
         speaker.stop()
@@ -1398,6 +1512,7 @@ def run_server() -> None:
         web.get("/", index), web.get("/classic", classic), web.get("/hud", hud), web.get("/api/telemetry", telemetry_get),
         web.get("/api/state", state), web.post("/api/command", command),
         web.post("/api/listen", listen), web.post("/api/stop", stop_speaking),
+        web.post("/api/voice/{action}", voice_action),
         web.post("/api/tasks", tasks_add), web.patch("/api/tasks/{id}", tasks_patch),
         web.delete("/api/tasks/{id}", tasks_delete), web.post("/api/shortcuts", shortcuts_add),
         web.delete("/api/shortcuts/{name}", shortcuts_delete), web.delete("/api/reminders/{idx}", reminders_delete),

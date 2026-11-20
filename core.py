@@ -230,6 +230,8 @@ FEATURES = {
     "water_reminders":  ("Напоминать пить воду", "Каждые 90 минут", False),
     "quiet_voice":      ("Говорить тише", "Голос Джарвиса на половину громкости", False),
     "dnd":              ("Не беспокоить", "Никаких сообщений по своей инициативе, кроме будильников", False),
+    "voice_lock":       ("Слушаться только моего голоса", "После «Запомни мой голос»: чужие голоса и звук из колонок не будят Джарвиса", True),
+    "barge_in":         ("Перебивать голосом", "Начните говорить, пока Джарвис отвечает, — он замолчит и выслушает", True),
 }
 
 _F = {k: v[2] for k, v in FEATURES.items()}
@@ -618,6 +620,7 @@ def save_json(path: Path, data) -> None:
 PENDING: dict = {}               # action waiting for "да"/"нет"
 FOLLOWUP = threading.Event()     # assistant should listen again right after speaking
 RECORD_REQUEST = threading.Event()   # start the voice recorder (set by the recorder skill / app)
+ENROLL_REQUEST = threading.Event()   # "запомни мой голос": the listener records ~20 s and saves a voiceprint
 RECORD_STOP = threading.Event()      # stop it (app button; voice "стоп" is handled by the listener)
 RECORD_LANG: dict = {"lang": "ru"}
 

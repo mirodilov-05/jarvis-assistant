@@ -38,6 +38,12 @@ foreach ($f in 'onnx/model_quantized.onnx', 'tokenizer.json') {
     }
 }
 
+# Voice ID model (tells your voice from others, runs on the CPU)
+New-Item -ItemType Directory -Force models\speaker | Out-Null
+if (-not (Test-Path models\speaker\voxceleb_resnet34_LM.onnx)) {
+    Invoke-WebRequest "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/main/voxceleb_resnet34_LM.onnx" -OutFile models\speaker\voxceleb_resnet34_LM.onnx -UseBasicParsing
+}
+
 Write-Host "5/5 Language model + shortcuts" -ForegroundColor Cyan
 if (Get-Command ollama -ErrorAction SilentlyContinue) { ollama pull qwen3.5:2b }
 $ws = New-Object -ComObject WScript.Shell

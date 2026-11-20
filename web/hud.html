@@ -328,7 +328,10 @@ $("#mic").onclick = () => { lastAct = Date.now(); api("/api/listen", "POST"); };
 $("#hush").onclick = () => api("/api/stop", "POST");
 
 // ================= modes =================
-let prof = null;
+let prof = null, voiceEnrolled = false;
+const READ_TEXT = "Привет, Джарвис. Сегодня я хочу спокойно закончить дела, а вечером немного поиграть. " +
+  "Напомни мне купить хлеб и позвонить маме. Какая завтра погода? Открой, пожалуйста, телеграм и включи музыку. " +
+  "(А теперь тише:) Джарвис, который час? Поставь таймер на пять минут.";
 async function loadProfiles() { prof = await api("/api/profiles"); renderModes(); renderSettings(); }
 async function pAct(action, body) { prof = await api(`/api/profiles/${action}`, "POST", body); renderModes(); renderSettings(); }
 window.pAct = pAct;
@@ -361,6 +364,12 @@ function renderSettings() {
   $("#setBody").innerHTML = `<div class="muted" style="font-size:13px">Настройки действуют, пока включён этот режим.</div>
     <h5>Характер</h5><select onchange="pAct('update',{id:'${id}',personality:this.value})">${PERS.map(([v, t]) => `<option value="${v}" ${p.personality === v ? "selected" : ""}>${t}</option>`).join("")}</select>
     <h5>Функции</h5>${Object.entries(prof.features).map(([k, f]) => sw(p.features[k], `pAct('update',{id:'${id}',feature:'${k}',value:this.checked})`, f.title, f.hint)).join("")}
+    <h5>Мой голос</h5>
+    <div style="font-size:14px">${voiceEnrolled ? "✅ Джарвис знает ваш голос и не реагирует на чужие голоса (в играх строже)." : "Джарвис пока отвечает любому голосу. Запомните свой — тогда друзья в войс-чате и звук из колонок его не разбудят."}</div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="link" style="margin:0;flex:1" onclick="api('/api/voice/enroll','POST');closeAll()">${voiceEnrolled ? "Запомнить заново" : "🎙 Запомнить мой голос"}</button>
+      ${voiceEnrolled ? `<button class="link" style="margin:0" onclick="if(confirm('Забыть ваш голос?'))api('/api/voice/forget','POST')">Забыть</button>` : ""}
+    </div>
     <h5>Это окно</h5>
     ${sw(store.get("speak", false), "store.set('speak',this.checked)", "Отвечать голосом на набранный текст", "")}
     ${sw(store.get("cards", true), "store.set('cards',this.checked)", "Показывать карточки", "Дела, память, напоминания появляются сами после команды и исчезают")}
@@ -417,6 +426,17 @@ function connect() {
     else if (ev.type === "heard" && !ev.ok) { $("#you").textContent = "не разобрал: " + ev.text; $("#you").classList.remove("fade"); }
     else if (ev.type === "data" && AUTO_CARD[ev.file] && store.get("cards", true) && Date.now() - lastAct < 15000) PANELS[AUTO_CARD[ev.file]]();
     else if (ev.type === "profiles") loadProfiles();
+    else if (ev.type === "settings") api("/api/state").then((s) => { voiceEnrolled = !!s.voice_enrolled; renderSettings(); });
+    else if (ev.type === "enroll") {
+      if (ev.state === "on") {
+        const pct = Math.min(100, Math.round(100 * ev.seconds / ev.need));
+        card("enroll", "Запоминаю ваш голос", `<div style="font-size:14px;margin-bottom:8px">Прочитайте вслух:</div>
+          <div style="font-size:15px;line-height:1.5">${esc(READ_TEXT)}</div>
+          <div class="bar" style="margin-top:10px;height:5px"><i style="width:${pct}%"></i></div>
+          <div class="chip" style="margin-top:4px">${ev.seconds} из ${ev.need} с речи</div>`, 0);
+      } else card("enroll", ev.ok ? "Голос запомнен" : "Не получилось", ev.ok
+          ? `<div>Теперь Джарвис слушается только вас.</div>` : `<div>Мало речи. Попробуйте ещё раз и говорите подольше.</div>`, 9000);
+    }
     else if (ev.type === "game") { game = ev.on; setStatus(); toast(ev.on ? "🎮 Игровой режим: " + ev.name : "Игровой режим выключен"); }
     else if (ev.type === "record") {
       if (ev.state === "on") card("rec", "● Запись", `<div>Идёт запись${ev.seconds ? " · " + ev.seconds + " с" : ""}. Скажите «стоп».</div>`, 0);
@@ -428,6 +448,7 @@ function connect() {
 async function load() {
   const s = await api("/api/state");
   history = s.history || []; game = !!s.game?.on; setStatus(s.status);
+  voiceEnrolled = !!s.voice_enrolled; renderSettings();
   const last = history.filter((m) => m.role !== "user").slice(-1)[0];
   if (last && Date.now() - lastAct > 1000) { $("#him").textContent = last.text; $("#him").classList.add("fade"); }
 }

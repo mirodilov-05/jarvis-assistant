@@ -144,6 +144,14 @@
 | Прочитать переписку с человеком / Kishi bilan yozishmani o'qish | «Что пишет мама?» | «Onam nima yozdi?» |
 | Непрочитанные сообщения в Telegram / Telegramdagi o'qilmagan xabarlar | «Сколько сообщений в телеграме?» | «Telegramda yangi xabarlar bormi?» |
 
+## voice_id
+
+| Навык / Ko'nikma | Примеры (ru) | Misollar (uz) |
+|---|---|---|
+| Запомнить мой голос (Джарвис будет слушаться только вас) | «Запомни мой голос» |  |
+| Забыть мой голос | «Забудь мой голос» |  |
+| Узнаёшь ли ты мой голос | «Ты узнаёшь мой голос?» |  |
+
 ## weather
 
 | Навык / Ko'nikma | Примеры (ru) | Misollar (uz) |

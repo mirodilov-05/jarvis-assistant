@@ -500,6 +500,12 @@ def load_plugins() -> list[str]:
             log.error("Plugin %s failed:\n%s", path.name, traceback.format_exc())
     _current_module = "core"
     SKILLS.sort(key=lambda s: s.priority)
+    try:
+        import tools
+        log.info("Loaded %d tools for the brain", tools.load_all())
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"tools: {e}")
+        log.exception("tools failed to load")
     write_capabilities()
     log.info("Loaded %d skills from plugins", len(SKILLS))
     return errors
@@ -650,6 +656,9 @@ def _handle_pending(text: str, lang: str) -> Optional[str]:
 
 
 _rerouting: dict = {}
+# skills whose last part is free text by design ("добавь дело <что угодно>") keep the instant path for long phrases
+_LONG_OK = {"tasks.add", "notes.add", "notes.search", "notes.recall", "reminders.in", "reminders.at", "messaging.send", "apps.search",
+            "apps.youtube", "apps.music", "apps.browser", "modes.name", "recorder.start", "briefing.report", "llm.chat"}
 # never run these from an AI guess — they change or delete things / talk to other people
 _NO_SMART = {"system.shutdown", "tasks.clear", "tasks.delete", "notes.delete", "notes.clear", "messaging.send",
              "apps.close", "reminders.cancel", "basics.reload", "recorder.start"}
@@ -662,11 +671,25 @@ def route(text: str, lang: str, source: str, config: dict) -> str:
     pending_reply = _handle_pending(text, lang)
     if pending_reply:
         return pending_reply
+    import agent
+    # several actions in one phrase: do them one by one, each through the reliable path
+    parts = agent.split_chain(text)
+    if len(parts) > 1 and not _rerouting.get("chain"):
+        _rerouting["chain"] = True
+        try:
+            replies = [route(p, lang, source, config) for p in parts[:5]]
+        finally:
+            _rerouting["chain"] = False
+        return " ".join(r for r in replies if r)
     other = [lg for lg in LANGS if lg != lang]
+    long_phrase = len(normalize(text, lang).split()) > 5 and feature("smart_understanding")
     # 1st pass: patterns of the detected language; 2nd pass: the other language
     for try_lang in [lang, *other]:
         norm = normalize(text, try_lang)
         for sk in SKILLS:
+            # instant shortcuts take long free-form phrases only where the tail is meant to be free text
+            if long_phrase and sk.name not in _LONG_OK:
+                continue
             for pat in sk.patterns.get(try_lang, []):
                 m = pat.search(norm)
                 if not m:
@@ -684,32 +707,11 @@ def route(text: str, lang: str, source: str, config: dict) -> str:
     if source == "голос" and len(normalize(text, lang).split()) < 2:
         FOLLOWUP.set()
         return "Не понял, повторите, пожалуйста." if lang == "ru" else "Tushunmadim, qaytaring."
-    # Smart understanding: let the AI rephrase free wording into a known command
-    # ("закинь в список молоко" -> "добавь дело молоко"), then run that command.
-    llm = sys.modules.get("jarvis_plugin_llm")
-    if llm and feature("smart_understanding") and not _rerouting.get("on"):
-        command = llm.understand(text, lang)
-        if command:
-            _rerouting["on"] = True
-            try:
-                for try_lang in [lang, *other]:
-                    norm = normalize(command, try_lang)
-                    for sk in SKILLS:
-                        if sk.module == "llm" or sk.name in _NO_SMART:
-                            continue
-                        for pat in sk.patterns.get(try_lang, []):
-                            m = pat.search(norm)
-                            if not m:
-                                continue
-                            ctx = Ctx(text=command, lang=lang, source=source, config=config, match=m, norm=norm)
-                            reply = sk.handler(ctx)
-                            if reply is not None:
-                                log.info("Smart router: %r -> %r -> %s", text, command, sk.name)
-                                return reply
-            except Exception:  # noqa: BLE001
-                log.exception("smart router failed")
-            finally:
-                _rerouting["on"] = False
+    # Anything else: the brain decides — call tools (any wording, chains) or just talk.
+    if feature("smart_understanding"):
+        reply = agent.run(text, source)
+        if reply is not None:
+            return reply
     fallback = next((s for s in SKILLS if s.name == "llm.chat"), None)
     if fallback:
         return fallback.handler(Ctx(text=text, lang=lang, source=source, config=config)) or ""

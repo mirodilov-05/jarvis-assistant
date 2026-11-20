@@ -100,6 +100,29 @@ def search(ctx: Ctx):
 
 
 @skill(
+    "notes.recall",
+    title={"ru": "Вспомнить то, что я просил запомнить"},
+    patterns={"ru": [r"(?:какой|какая|какое|какие|напомни|скажи|подскажи)(?: у меня| мой| моя| мне)? "
+                     r"(пароль|код|номер|адрес|логин|пин|пинкод|день рождения|дату|почту)\w* ?(.*)$",
+                     r"(?:что|какой|какую|какие) я (?:тебе )?(?:говорил|просил запомнить|записывал|просил записать|сохранял)"
+                     r" ?(?:про |о |об |насчет )?(.*)$",
+                     r"(?:ты )?помнишь(?: ли)?(?: что| про| о)? (.+)$"]},
+    examples={"ru": ["Какой у меня пароль от вайфая?", "Что я говорил про Ахмада?"]},
+    priority=38,
+)
+def recall(ctx: Ctx) -> str:
+    query = " ".join(x for x in (ctx.match.groups() if ctx.match else []) if x).strip()
+    words = [w for w in re.split(r"\s+", query.lower()) if len(w) > 2 and w not in ("что", "это", "мне", "меня", "был", "была")]
+    if not words:
+        return None
+    hits = [(i, n) for i, n in enumerate(all_notes(), 1)
+            if sum(w[:max(4, len(w) - 2)] in n["text"].lower() for w in words) >= max(1, len(words) // 2)]
+    if not hits:
+        return ctx.t(f"Ты мне ничего не говорил про «{query}». Скажи «запомни …», и я сохраню.", "Bu haqida eslatma yo'q.")
+    return " ".join(n["text"] + "." for _, n in hits[-3:])
+
+
+@skill(
     "notes.delete",
     title={"ru": "Удалить заметку (номер или последнюю)", "uz": "Qaydni o'chirish"},
     patterns={"ru": [r"(?:удали|сотри|убери) (?:последнюю )?заметку(?: номер)? ?" + core.NUM_RE + r"?$",
@@ -118,9 +141,16 @@ def delete(ctx: Ctx) -> str:
     idx = (num - 1) if num else len(notes) - 1
     if not 0 <= idx < len(notes):
         return ctx.t(f"Заметки номер {num} нет. Всего заметок: {len(notes)}.", f"{num}-qayd yo'q.")
-    removed = notes.pop(idx)
-    save_all(notes)
-    return ctx.t(f"Удалил заметку: {removed['text']}.", f"O'chirildi: {removed['text']}.")
+    target = notes[idx]
+
+    def do() -> str:
+        cur = all_notes()
+        if target in cur:
+            cur.remove(target)
+            save_all(cur)
+        return ctx.t(f"Удалил заметку: {target['text']}.", f"O'chirildi: {target['text']}.")
+
+    return ask_confirm(ctx, f"Удалить заметку «{target['text']}»? Скажите да или нет.", do)
 
 
 @skill(

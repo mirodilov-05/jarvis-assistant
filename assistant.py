@@ -1368,6 +1368,8 @@ def main() -> None:
     errors = core.load_plugins()
     if errors:
         log.error("Plugin errors: %s", errors)
+    import memory
+    memory.warm_up()   # semantic memory: load the small CPU model and index notes in the background
     threading.Thread(target=run_server, daemon=True, name="server").start()
     try:  # if a game is already running, load speech models straight onto the CPU
         _path, _fs = _foreground_process()

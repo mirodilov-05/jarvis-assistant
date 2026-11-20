@@ -35,6 +35,13 @@ def add_note(text: str) -> None:
     core.emit({"type": "data", "file": FILE.name})
 
 
+def find(query: str, k: int = 3, min_score: float = 0.35) -> list[tuple[int, dict]]:
+    """Notes about the query by meaning («пароль от интернета» finds «пароль от вайфая»), best first, 1-based."""
+    import memory
+    notes = all_notes()
+    return [(i + 1, notes[i]) for i in memory.search(query, [n["text"] for n in notes], k, min_score)]
+
+
 def _read(ctx: Ctx, items: list[tuple[int, dict]], empty: str) -> str:
     if not items:
         return empty
@@ -93,10 +100,8 @@ def search(ctx: Ctx):
     if "заметк" not in ctx.norm and "записыв" not in ctx.norm and "записал" not in ctx.norm and ctx.lang == "ru":
         return None   # plain "найди X" is a web search
     q = ctx.group(1).lower()
-    words = [w for w in re.split(r"\s+", q) if len(w) > 2]
-    hits = [(i, n) for i, n in enumerate(all_notes(), 1)
-            if any(w[:max(4, len(w) - 2)] in n["text"].lower() for w in words)]
-    return _read(ctx, hits[-5:], ctx.t(f"В заметках ничего про «{q}».", f"Qaydlarda «{q}» haqida hech narsa yo'q."))
+    hits = find(q, k=5, min_score=0.45)
+    return _read(ctx, hits, ctx.t(f"В заметках ничего про «{q}».", f"Qaydlarda «{q}» haqida hech narsa yo'q."))
 
 
 @skill(
@@ -106,20 +111,24 @@ def search(ctx: Ctx):
                      r"(пароль|код|номер|адрес|логин|пин|пинкод|день рождения|дату|почту)\w* ?(.*)$",
                      r"(?:что|какой|какую|какие) я (?:тебе )?(?:говорил|просил запомнить|записывал|просил записать|сохранял)"
                      r" ?(?:про |о |об |насчет )?(.*)$",
+                     r"(?:что|о чем|про что|какую идею) я (?:хотел|собирался|планировал|придумал)(?: тебе)? ?(.*)$",
                      r"(?:ты )?помнишь(?: ли)?(?: что| про| о)? (.+)$"]},
     examples={"ru": ["Какой у меня пароль от вайфая?", "Что я говорил про Ахмада?"]},
     priority=38,
 )
 def recall(ctx: Ctx) -> str:
     query = " ".join(x for x in (ctx.match.groups() if ctx.match else []) if x).strip()
-    words = [w for w in re.split(r"\s+", query.lower()) if len(w) > 2 and w not in ("что", "это", "мне", "меня", "был", "была")]
-    if not words:
+    if len(query) < 3:
         return None
-    hits = [(i, n) for i, n in enumerate(all_notes(), 1)
-            if sum(w[:max(4, len(w) - 2)] in n["text"].lower() for w in words) >= max(1, len(words) // 2)]
+    hits = find(ctx.text, k=2, min_score=0.3)   # the whole question carries the meaning («какой пароль от интернета»)
     if not hits:
         return ctx.t(f"Ты мне ничего не говорил про «{query}». Скажи «запомни …», и я сохраню.", "Bu haqida eslatma yo'q.")
-    return " ".join(n["text"] + "." for _, n in hits[-3:])
+    # "пароль от почты" vs a note "пароль от вайфая": same kind of thing, different object — say so honestly
+    import memory
+    obj = re.search(r"\b(?:от|для|к) (\w{3,})", ctx.norm)
+    if obj and not any(memory.mentions(n["text"], obj.group(1)) for _, n in hits):
+        return f"Этого ты мне не говорил. Есть только похожее: {hits[0][1]['text']}."
+    return " ".join(n["text"] + "." for _, n in hits)
 
 
 @skill(

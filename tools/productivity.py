@@ -91,7 +91,7 @@ def remember(text: str) -> str:
     return run_skill("notes.add", f"запиши заметку {text}")
 
 
-@tool("search_notes", "Найти в заметках/памяти по теме.", {"query": S}, ["query"])
+@tool("search_notes", "Найти в заметках/памяти по смыслу: что пользователь просил запомнить.", {"query": S}, ["query"])
 def search_notes(query: str) -> str:
     return run_skill("notes.search", f"найди в заметках {query}")
 

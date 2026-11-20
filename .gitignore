@@ -9,6 +9,7 @@ data/
 # Large downloaded models (fetched by install.ps1)
 voices/*.onnx
 voices/*.onnx.json
+models/
 
 # Node
 whatsapp-bridge/node_modules/

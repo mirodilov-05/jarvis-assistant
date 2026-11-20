@@ -29,6 +29,15 @@ foreach ($v in 'dmitri', 'denis', 'irina', 'ruslan') {
     }
 }
 
+# Semantic memory model (finds notes by meaning, runs on the CPU)
+New-Item -ItemType Directory -Force models\minilm\onnx | Out-Null
+foreach ($f in 'onnx/model_quantized.onnx', 'tokenizer.json') {
+    $out = "models\minilm\$($f -replace '/', '\')"
+    if (-not (Test-Path $out)) {
+        Invoke-WebRequest "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/main/$f" -OutFile $out -UseBasicParsing
+    }
+}
+
 Write-Host "5/5 Language model + shortcuts" -ForegroundColor Cyan
 if (Get-Command ollama -ErrorAction SilentlyContinue) { ollama pull qwen3.5:2b }
 $ws = New-Object -ComObject WScript.Shell

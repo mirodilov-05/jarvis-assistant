@@ -45,6 +45,9 @@ def _system(text: str) -> str:
         ctx = "\n\nКонтекст пользователя:\n" + llm.context_text()
     else:
         ctx = f"\n\nСейчас {core.now():%A %d.%m.%Y %H:%M}. Режим: {core.active_profile()['title']}."
+    mem = llm.memories_for(text) if llm else []
+    if mem:   # semantic memory: what the user told Jarvis before that is about this request
+        ctx += "\nПользователь раньше просил запомнить: " + " | ".join(mem)
     return base + GUIDE + ctx
 
 

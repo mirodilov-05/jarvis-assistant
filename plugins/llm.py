@@ -58,6 +58,17 @@ _history: list[dict] = []
 _client_cache: dict = {}
 
 
+def memories_for(text: str, k: int = 3) -> list[str]:
+    """Notes clearly related to what the user just said — fed to the brain so it "remembers" by meaning."""
+    notes_mod = sys.modules.get("jarvis_plugin_notes")
+    if not notes_mod or not text:
+        return []
+    try:
+        return [n["text"] for _, n in notes_mod.find(text, k=k, min_score=0.4)]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def context_text() -> str:
     lines = [f"Сейчас {core.now():%A %d.%m.%Y %H:%M}."]
     tasks_mod = sys.modules.get("jarvis_plugin_tasks")

@@ -89,6 +89,9 @@ _OPS = {
 )
 def calc_skill(ctx: Ctx):
     expr = ctx.group(2) if ctx.lang == "ru" and ctx.match.lastindex and ctx.match.lastindex >= 2 else ctx.group(1)
+    raw = re.search(r"(?:будет|посчитай|вычисли)\s+(.+)$", ctx.text, re.I)   # normalised text has lost * / ( )
+    if raw and re.search(r"[*/×÷()]", raw.group(1)):
+        expr = raw.group(1).strip(" ?!.=").replace("×", "*").replace("÷", "/").lower()
     for word, op in sorted(_OPS.items(), key=lambda kv: -len(kv[0])):
         expr = re.sub(rf"\b{word}\b", f" {op} ", expr)
     expr = expr.replace(",", ".")

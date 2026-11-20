@@ -97,6 +97,7 @@
 <aside>
   <div class="brand"><div id="orb" class="orb"></div><div><h1>JARVIS</h1><small id="statusText">запуск…</small></div></div>
   <nav id="nav">
+    <button onclick="location.href='/hud'" title="Вернуться в HUD">◉ HUD</button>
     <button data-s="chat" class="active">💬 Чат</button>
     <button data-s="profiles">🎛 Режимы</button>
     <button data-s="tasks">✅ Дела <span class="badge" id="taskBadge"></span></button>
@@ -218,7 +219,7 @@ async function api(path, method = "GET", body) {
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 function setStatus(s) { $("#orb").className = "orb " + s; $("#statusText").textContent = STATUS[s] || s; }
 
-document.querySelectorAll("#nav button").forEach((b) => b.onclick = () => {
+document.querySelectorAll("#nav button[data-s]").forEach((b) => b.onclick = () => {
   document.querySelectorAll("#nav button").forEach((x) => x.classList.toggle("active", x === b));
   document.querySelectorAll(".section").forEach((s) => s.classList.toggle("active", s.id === b.dataset.s));
   $("#title").textContent = TITLES[b.dataset.s];

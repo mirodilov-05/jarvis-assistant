@@ -74,6 +74,51 @@ def langs() -> list[str]:
 
 
 STATUS = {"state": "starting"}
+LEVEL = {"v": 0.0}   # microphone loudness, read by the HUD
+
+
+class _MemStatus(ctypes.Structure):
+    _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong)] + \
+               [(n, ctypes.c_ulonglong) for n in ("total", "avail", "tpf", "apf", "tv", "av", "aev")]
+
+
+_cpu_prev: list = []
+
+
+def _cpu_percent() -> float:
+    idle, kern, user = (ctypes.c_ulonglong() for _ in range(3))
+    ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kern), ctypes.byref(user))
+    cur = (idle.value, kern.value + user.value)
+    prev = _cpu_prev[:] or [cur]
+    _cpu_prev[:] = [cur]
+    d_idle, d_total = cur[0] - prev[0][0], cur[1] - prev[0][1]
+    return round(100 * (1 - d_idle / d_total), 1) if d_total else 0.0
+
+
+def telemetry() -> dict:
+    """What the HUD shows: GPU/VRAM, CPU/RAM, which models are loaded where. Called only while the HUD is open."""
+    out: dict = {"cpu": _cpu_percent(), "game": GAME["on"], "status": STATUS["state"],
+                 "whisper": {k: v[1] for k, v in _models.items()}}
+    ms = _MemStatus(dwLength=ctypes.sizeof(_MemStatus))
+    if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms)):
+        out["ram"] = {"used_gb": round((ms.total - ms.avail) / 2**30, 1), "total_gb": round(ms.total / 2**30, 1)}
+    try:
+        r = subprocess.run(["nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+                            "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=3,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        name, util, used, total, temp = [x.strip() for x in r.stdout.strip().splitlines()[0].split(",")]
+        out["gpu"] = {"name": name, "util": int(util), "vram_used": int(used), "vram_total": int(total), "temp": int(temp)}
+    except Exception:  # noqa: BLE001
+        out["gpu"] = None
+    try:
+        import requests
+        url = core.CONFIG.get("llm", {}).get("ollama_url", "http://127.0.0.1:11434")
+        out["llm"] = [{"name": m["name"], "vram_mb": round(m.get("size_vram", 0) / 2**20)}
+                      for m in requests.get(url + "/api/ps", timeout=1).json().get("models", [])]
+    except Exception:  # noqa: BLE001
+        out["llm"] = None   # Ollama not running
+    out["memory_model"] = bool(sys.modules.get("memory") and sys.modules["memory"]._model)
+    return out
 
 
 def set_status(state: str) -> None:
@@ -577,6 +622,7 @@ class Listener:
         self.recent = collections.deque(maxlen=25)   # last 2 s of audio for wake-word verification
 
     def _callback(self, indata, frames, t, status) -> None:
+        LEVEL["v"] = float(np.abs(indata).mean())   # for the HUD reactor; ~1 µs
         try:
             self.frames.put_nowait(indata[:, 0].copy())
         except queue.Full:
@@ -1128,8 +1174,30 @@ def run_server() -> None:
 
     core.subscribe(broadcast)
 
-    async def index(_r):
+    async def level_pump() -> None:
+        """Mic loudness to the HUD ~12×/s — only while a window is open and not in a game."""
+        while True:
+            await asyncio.sleep(0.08)
+            if clients and not GAME["on"]:
+                msg = json.dumps({"type": "level", "v": round(LEVEL["v"], 1), "s": STATUS["state"]})
+                for ws in list(clients):
+                    try:
+                        await ws.send_str(msg)
+                    except Exception:  # noqa: BLE001
+                        clients.discard(ws)
+
+    async def index(_r):   # the HUD; the full classic window with every tab stays at /classic
+        page = "index.html" if cfg("assistant", "ui", "hud") == "classic" else "hud.html"
+        return web.FileResponse(BASE / "web" / page)
+
+    async def classic(_r):
         return web.FileResponse(BASE / "web" / "index.html")
+
+    async def hud(_r):
+        return web.FileResponse(BASE / "web" / "hud.html")
+
+    async def telemetry_get(_r):
+        return web.json_response(await asyncio.to_thread(telemetry))
 
     async def state(_r):
         return web.json_response(await asyncio.to_thread(app_state))
@@ -1327,7 +1395,8 @@ def run_server() -> None:
 
     app = web.Application()
     app.add_routes([
-        web.get("/", index), web.get("/api/state", state), web.post("/api/command", command),
+        web.get("/", index), web.get("/classic", classic), web.get("/hud", hud), web.get("/api/telemetry", telemetry_get),
+        web.get("/api/state", state), web.post("/api/command", command),
         web.post("/api/listen", listen), web.post("/api/stop", stop_speaking),
         web.post("/api/tasks", tasks_add), web.patch("/api/tasks/{id}", tasks_patch),
         web.delete("/api/tasks/{id}", tasks_delete), web.post("/api/shortcuts", shortcuts_add),
@@ -1345,6 +1414,7 @@ def run_server() -> None:
     loop.run_until_complete(runner.setup())
     loop.run_until_complete(web.TCPSite(runner, "127.0.0.1", APP_PORT).start())
     log.info("App server on %s", APP_URL)
+    loop.create_task(level_pump())
     loop.run_forever()
 
 

@@ -67,6 +67,14 @@ def power(action: str) -> str:
     return run_skill("system.shutdown", "перезагрузи компьютер" if action == "restart" else "выключи компьютер")
 
 
+@tool("look_at_screen", "Посмотреть на экран (активное окно) и ответить про то, что там видно: прочитать текст, "
+      "объяснить ошибку, перевести, описать картинку или страницу.",
+      {"question": {**S, "description": "Что пользователь хочет узнать про экран"}}, ["question"])
+def look_at_screen(question: str) -> str:
+    import vision
+    return vision.look(question)
+
+
 @tool("battery", "Узнать заряд батареи ноутбука.")
 def battery() -> str:
     return run_skill("system.battery", "сколько заряда")

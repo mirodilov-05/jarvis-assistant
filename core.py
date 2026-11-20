@@ -660,7 +660,7 @@ def _handle_pending(text: str, lang: str) -> Optional[str]:
 
 _rerouting: dict = {}
 # skills whose last part is free text by design ("добавь дело <что угодно>") keep the instant path for long phrases
-_LONG_OK = {"tasks.add", "notes.add", "notes.search", "notes.recall", "reminders.in", "reminders.at", "messaging.send", "apps.search",
+_LONG_OK = {"vision.look", "tasks.add", "notes.add", "notes.search", "notes.recall", "reminders.in", "reminders.at", "messaging.send", "apps.search",
             "apps.youtube", "apps.music", "apps.browser", "modes.name", "recorder.start", "briefing.report", "llm.chat"}
 # never run these from an AI guess — they change or delete things / talk to other people
 _NO_SMART = {"system.shutdown", "tasks.clear", "tasks.delete", "notes.delete", "notes.clear", "messaging.send",

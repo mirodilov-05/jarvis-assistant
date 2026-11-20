@@ -144,6 +144,12 @@
 | Прочитать переписку с человеком / Kishi bilan yozishmani o'qish | «Что пишет мама?» | «Onam nima yozdi?» |
 | Непрочитанные сообщения в Telegram / Telegramdagi o'qilmagan xabarlar | «Сколько сообщений в телеграме?» | «Telegramda yangi xabarlar bormi?» |
 
+## vision
+
+| Навык / Ko'nikma | Примеры (ru) | Misollar (uz) |
+|---|---|---|
+| Посмотреть на экран: прочитать, объяснить ошибку, перевести | «Что у меня на экране?»; «Объясни ошибку на экране»; «Переведи текст на экране» |  |
+
 ## voice_id
 
 | Навык / Ko'nikma | Примеры (ru) | Misollar (uz) |

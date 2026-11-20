@@ -426,6 +426,8 @@ function connect() {
     else if (ev.type === "heard" && !ev.ok) { $("#you").textContent = "не разобрал: " + ev.text; $("#you").classList.remove("fade"); }
     else if (ev.type === "data" && AUTO_CARD[ev.file] && store.get("cards", true) && Date.now() - lastAct < 15000) PANELS[AUTO_CARD[ev.file]]();
     else if (ev.type === "profiles") loadProfiles();
+    else if (ev.type === "vision") card("vision", "Смотрю на экран", `<img src="data:image/png;base64,${ev.thumb}" alt=""
+        style="width:100%;border-radius:8px;border:1px solid var(--line);display:block"><div class="chip" style="margin-top:6px">${esc(ev.title)}</div>`, 20000);
     else if (ev.type === "settings") api("/api/state").then((s) => { voiceEnrolled = !!s.voice_enrolled; renderSettings(); });
     else if (ev.type === "enroll") {
       if (ev.state === "on") {

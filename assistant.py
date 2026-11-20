@@ -350,13 +350,13 @@ def stt_device() -> str:
 
 
 def whisper(kind: str = "main"):
-    """kind = "main" (Uzbek-tuned, writes text) or "lid" (stock base, detects language)."""
-    device = stt_device()
+    """kind = "main" (writes text), "lid" (detects language) or "spot" (small CPU model that only listens for the name)."""
+    device = "cpu" if kind == "spot" else stt_device()
     with _whisper_lock:
         m = _models.get(kind)
         if m is None or m[1] != device:
             name = cfg("voice", "whisper_model", "yuldashev222/whisper-small-uz-v1-ct2") if kind == "main" else \
-                cfg("voice", "lid_model", "base")
+                cfg("voice", "spot_model", "tiny") if kind == "spot" else cfg("voice", "lid_model", "base")
             _models[kind] = (_load_model(name, device), device)
             log.info("Whisper %s model loaded: %s on %s", kind, name, device)
         return _models[kind][0]
@@ -368,7 +368,9 @@ PROMPTS = {
 }
 _HALLUCINATIONS = re.compile(
     r"(продолжение следует|субтитр|редактор субтитров|спасибо за просмотр|подписывайтесь|ставьте лайк|"
-    r"thank you for watching|amara\.org|dima torzok|корректор|до новых встреч|^музыка$)", re.I)
+    r"thank you for watching|amara\.org|dima torzok|корректор|до новых встреч|^музыка$|"
+    r"(динамичн|спокойн|весёл|весел|грустн|напряжённ|напряженн|торжествен)\w* музык|музыкальная заставка|"
+    r"^(аплодисменты|смех|тишина|шум)\.?$)", re.I)
 _REPEATS = re.compile(r"(.{2,12}?)\1{3,}")
 
 
@@ -406,7 +408,8 @@ def transcribe(audio: np.ndarray, accurate: bool = True, lang_hint: str | None =
     """Return (text, lang, reliable). reliable=False means mumbling/noise/hallucination."""
     if voiced_seconds(audio) < 0.24:   # no actual speech: don't let Whisper invent words
         return "", lang_hint or langs()[0], False
-    if cloud.stt_enabled():
+    spot = cloud.stt_enabled() and not accurate and cfg("cloud", "local_spotting", True)
+    if cloud.stt_enabled() and not spot:
         try:
             return _transcribe_cloud(audio, accurate, lang_hint)
         except Exception as e:  # noqa: BLE001 - offline / quota
@@ -417,9 +420,10 @@ def transcribe(audio: np.ndarray, accurate: bool = True, lang_hint: str | None =
     a = audio.astype(np.float32) / 32768.0
 
     def decode(lg: str):
-        segments, _ = whisper("main").transcribe(
+        segments, _ = whisper("spot" if spot else "main").transcribe(
             a, language=lg, beam_size=5 if accurate else 2, vad_filter=False, without_timestamps=True,
-            condition_on_previous_text=False, initial_prompt=PROMPTS.get(lg) if accurate else None, temperature=0.0)
+            condition_on_previous_text=False, temperature=0.0,
+            initial_prompt=PROMPTS.get(lg) if accurate else ("Эй, Джарвис." if spot else None))
         out = list(segments)
         score = (sum(x.avg_logprob for x in out) / len(out)) if out else -9.0
         return out, score
@@ -518,10 +522,17 @@ def is_jarvis(word: str) -> bool:
     import difflib
 
     p = _phonetic(word)
-    if not 4 <= len(p) <= 9:
+    if not 4 <= len(p) <= 11:
         return False
     if p in {_phonetic(n) for n in cfg("wake", "names", [])}:
         return True
+    p = re.sub(r"^(?:hey|hei|ey|ei|e|i)(?=(?:j|h|k|g)a?r)", "", p)        # «эйжарвис», «ихарвис» = «эй/и + харвис»
+    if re.fullmatch(r"(?:h|k|g)ar{1,2}v?(?:i|e|y)s", p):                   # how Whisper hears your «жарвис»: харвис, карис
+        return True
+    if re.fullmatch(r"jayv(?:i|e)s", p):                                     # «джайвис»
+        return True
+    if not 4 <= len(p) <= 9:
+        return False
     if not (p.startswith("j") or p.startswith("dar") or p.startswith("yar")):
         return False
     if len(p) < 5 or not re.search(r"[sz](a|i|u|ga|ni|y)?$", p):   # the name ends in "-is": жарис, javvis, jarrus
@@ -543,7 +554,7 @@ def find_name(text: str, max_pos: int = 2) -> int | None:
     return None
 
 
-_FILLER_WORD = re.compile(r"^(эй|ей|хей|хэй|hey|ey|xey|hay|eng|e|э|привет|слушай|salom|assalomu|alaykum|hoy|ok|okay|окей|о|а|ну|aka|ака|бро|bro)[,.!]?$", re.I)
+_FILLER_WORD = re.compile(r"^(эй|ей|хей|хэй|и|hey|ey|xey|hay|eng|e|э|привет|слушай|salom|assalomu|alaykum|hoy|ok|okay|окей|о|а|ну|aka|ака|бро|bro)[,.!]?$", re.I)
 
 
 # ---------------------------------------------------------------------------
@@ -841,8 +852,8 @@ class Listener:
                 # 2) "Джарвис, …" inside normal speech
                 if not core.feature("name_listening") or (GAME["on"] and not cfg("performance", "names_in_games", True)):
                     continue
-                if cloud.stt_enabled() and not cfg("cloud", "names_in_speech", False):
-                    continue   # cloud mode: wake by "Hey Jarvis" only, room talk is never sent anywhere
+                if cloud.stt_enabled() and not cfg("cloud", "names_in_speech", True):
+                    continue   # turned off in config: wake by "Hey Jarvis" only
                 p = self.speech_prob(chunk)
                 if p >= self.SPEECH_ON:
                     if not utter:
@@ -969,6 +980,22 @@ class Listener:
             duck_end_later()
 
     def _after_name(self, audio: np.ndarray, words: list[str], idx: int) -> None:
+        if cloud.stt_enabled() and cfg("cloud", "local_spotting", True):
+            text, lang, reliable = transcribe(audio, accurate=True)
+            words2 = re.findall(r"[\w'ʻ’-]+", text)
+            idx2 = find_name(" ".join(words2))
+            if idx2 is None:
+                log.info("Name not confirmed by the cloud (%r) — ignored", text)
+                return
+            rest = " ".join(words2[idx2 + 1:])
+            if not reliable or len(rest) < 3:
+                self._on_wake()          # just the name: answer «Слушаю» and listen
+                return
+            core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": "голос"})
+            self.process(rest, lang)
+            self.wake.reset()
+            self.flush()
+            return
         rest_words = words[idx + 1:]
         if len("".join(rest_words)) >= 3:
             # it's addressed to Jarvis: transcribe again, carefully, in the detected language
@@ -1908,6 +1935,8 @@ def main() -> None:
             whisper("lid")
     else:
         log.info("Cloud mode: speech recognition on Groq, nothing loaded on the GPU")
+        if cfg("cloud", "local_spotting", True):
+            threading.Thread(target=whisper, args=("spot",), daemon=True, name="spot-load").start()
     LISTENER = Listener()
     threading.Thread(target=LISTENER.run, daemon=True, name="listener").start()
     threading.Thread(target=game_watcher, daemon=True, name="game-watcher").start()

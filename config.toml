@@ -97,7 +97,8 @@ llm_backup_model = "openai/gpt-oss-120b"
 gemini_model = "gemini-2.5-flash"
 vision_model = "gemini-2.5-flash"
 local_fallback = false              # true = when offline use local Whisper + Ollama (loads them into VRAM)
-names_in_speech = false             # true = also catch "Джарвис" inside normal speech (sends every phrase to Groq)
+names_in_speech = true              # catch «Джарвис» / «Эй, Джарвис» inside normal speech
+local_spotting = true               # the name is checked by a small Whisper on the CPU — room talk is never sent anywhere
 
 [llm]
 # Local fallback only (see [cloud] local_fallback).

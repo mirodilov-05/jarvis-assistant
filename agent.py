@@ -5,7 +5,7 @@ One request may call several tools at once ("закрой телеграм и в
 (delete, power) are confirmed with "да/нет" first. If no tool fits, the model
 just answers — that's the conversation.
 
-Providers: local Ollama (qwen3.5, supports tools) or Claude via your API key.
+Providers: the cloud (Groq / Gemini, cloud.py — default in V3), local Ollama (qwen3.5) or Claude via your API key.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ def _system(text: str) -> str:
     llm = _llm()
     base = llm.system_prompt("ru") if llm else "Ты Джарвис, голосовой помощник."
     ctx = ""
-    if llm and (llm.provider() == "claude" or llm._NEEDS_CONTEXT.search(text)):
+    if llm and (llm.provider() in ("claude", "cloud") or llm._NEEDS_CONTEXT.search(text)):
         ctx = "\n\nКонтекст пользователя:\n" + llm.context_text()
     else:
         ctx = f"\n\nСейчас {core.now():%A %d.%m.%Y %H:%M}. Режим: {core.active_profile()['title']}."
@@ -96,6 +96,17 @@ _CLAIM = re.compile(r"\b(открываю|открою|откроем|закры
 
 # extra words people use for each tool (besides its description)
 SYNONYMS = {
+    "app_volume": "громкость игры дискорда браузера музыки программы приложения отдельно тише громче процентов",
+    "quieter_here": "тише громче тут здесь звук игры",
+    "focus_shield": "фокус фокусировка сосредоточиться работаю учусь отвлекает прокрастинация щит минут",
+    "translate_screen": "переведи перевод перевести английский японский текст экран окно игра",
+    "save_this": "сохрани это ссылку фрагмент код",
+    "rates": "курс биткоин эфир usdt доллар рубль сум валюта крипта стоит цена",
+    "watch_movie": "фильм сериал посмотреть кино включи кинопоиск",
+    "media_seek": "перемотай вперёд назад перемотка секунд",
+    "code_create_file": "создай файл напиши скрипт программу код python",
+    "code_run": "запусти скрипт выполни код программу ошибка терминал",
+    "code_fix": "исправь ошибку почини фикс баг",
     "look_at_screen": "экран экране монитор окно вижу видишь посмотри глянь прочитай написано ошибка переведи картинка страница тут здесь",
     "open": "открой запусти включи зайди поиграть игру программу сайт приложение",
     "close_app": "закрой выключи убери вырубай заверши",
@@ -195,10 +206,28 @@ def _call_claude(system: str, messages: list[dict]) -> tuple[str, list]:
     return text, calls
 
 
+def _call_cloud(system: str, messages: list[dict]) -> tuple[str, list]:
+    import cloud
+    # only the tools that fit this phrase: all 51 would cost ~3000 tokens per request, and the free Groq plan
+    # allows ~8000 tokens a minute per model
+    text = next((m["content"] for m in reversed(messages) if m.get("role") == "user" and isinstance(m.get("content"), str)
+                 and not m["content"].startswith("Ты не вызвал")), "")
+    return cloud.chat([{"role": "system", "content": system}] + messages, tools=pick_tools(text, k=12),
+                      max_tokens=500, temperature=0.2)
+
+
 def _think(text: str) -> tuple[str, list]:
     system = _system(text)
     messages = _history[-8:] + [{"role": "user", "content": text}]
     llm = _llm()
+    if llm and llm.provider() == "cloud":
+        import cloud
+        try:
+            return _call_cloud(system, messages)
+        except Exception:  # noqa: BLE001
+            core.log.exception("Cloud tool call failed")
+            if not cloud.local_fallback():
+                raise
     if llm and llm.provider() == "claude":
         try:
             return _call_claude(system, messages)
@@ -240,7 +269,7 @@ def run(text: str, source: str) -> str | None:
         if not content:
             return None
         if source == "голос" and llm:
-            _tokens, sentences = llm.LIMITS[core.mode()]
+            _tokens, sentences = llm.LIMITS.get(core.mode(), (180, 3))
             content = llm._short(content, sentences)
             if core.mode() == "friend" or content.rstrip().endswith("?"):
                 core.FOLLOWUP.set()

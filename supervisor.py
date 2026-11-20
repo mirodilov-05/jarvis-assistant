@@ -37,7 +37,22 @@ def single_instance() -> socket.socket:
     return s
 
 
+def _cloud_only() -> bool:
+    """V3 cloud mode: don't start Ollama (it would take video memory) unless [cloud] local_fallback = true."""
+    try:
+        import json
+        import tomllib
+        cfg = tomllib.loads((BASE / "config.toml").read_text(encoding="utf-8"))
+        over = json.loads((DATA / "settings.json").read_text(encoding="utf-8")) if (DATA / "settings.json").exists() else {}
+        c = {**cfg.get("cloud", {}), **over.get("cloud", {})}
+        return bool(c.get("enabled", True)) and not c.get("local_fallback", False)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def ensure_ollama() -> None:
+    if _cloud_only():
+        return
     out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq ollama.exe", "/NH"], capture_output=True, text=True,
                          creationflags=NO_WINDOW).stdout
     if "ollama.exe" in out.lower():

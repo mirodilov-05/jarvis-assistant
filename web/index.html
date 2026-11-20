@@ -3,606 +3,647 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Jarvis</title>
+<title>Джарвис</title>
 <style>
-  :root {
-    --bg: #0a0f1a; --panel: #111827; --panel2: #1a2333; --line: #243049; --text: #e6edf7;
-    --muted: #8b98ad; --accent: #38bdf8; --accent2: #0ea5e9; --ok: #34d399; --warn: #fbbf24; --bad: #f87171;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
-         display: grid; grid-template-columns: 220px 1fr; height: 100vh; overflow: hidden; }
-  aside { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 16px 10px; }
-  .brand { display: flex; align-items: center; gap: 12px; padding: 4px 8px 18px; }
-  .orb { width: 42px; height: 42px; border-radius: 50%; flex: none; position: relative;
-         background: radial-gradient(circle at 35% 35%, #7dd3fc, #0369a1 60%, #082f49); box-shadow: 0 0 18px #0ea5e955; }
-  .orb::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 2px solid var(--accent); opacity: .35; }
-  .orb.recording { background: radial-gradient(circle at 35% 35%, #fca5a5, #dc2626 60%, #450a0a); box-shadow: 0 0 22px #f8717199; }
-  .orb.recording::after, .orb.thinking::after, .orb.speaking::after { animation: pulse 1.1s infinite; opacity: .9; }
-  .orb.taping { background: radial-gradient(circle at 35% 35%, #fca5a5, #b91c1c 60%, #450a0a); }
-  .orb.taping::after { animation: pulse 1.6s infinite; opacity: .9; border-color: #f87171; }
-  .orb.thinking { background: radial-gradient(circle at 35% 35%, #fde68a, #d97706 60%, #451a03); }
-  .orb.speaking { box-shadow: 0 0 26px #38bdf8cc; }
-  @keyframes pulse { 0% { transform: scale(1); opacity: .9 } 100% { transform: scale(1.35); opacity: 0 } }
-  .brand h1 { font-size: 18px; margin: 0; letter-spacing: 2px; }
-  .brand small { color: var(--muted); display: block; font-size: 12px; }
-  nav button { width: 100%; text-align: left; background: none; border: 0; color: var(--muted); padding: 9px 12px;
-               border-radius: 8px; cursor: pointer; font: inherit; display: flex; gap: 10px; align-items: center; }
-  nav button:hover { background: var(--panel2); color: var(--text); }
-  nav button.active { background: #0c4a6e55; color: var(--accent); }
-  nav .badge { margin-left: auto; background: var(--accent2); color: #001; border-radius: 10px; padding: 0 7px; font-size: 12px; }
-  .side-foot { margin-top: auto; color: var(--muted); font-size: 12px; padding: 8px; }
-  main { display: flex; flex-direction: column; overflow: hidden; }
-  header { padding: 14px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; }
-  header h2 { margin: 0; font-size: 17px; font-weight: 600; }
-  header .spacer { flex: 1; }
-  .section { display: none; flex: 1; overflow: auto; padding: 18px 22px; }
-  .section.active { display: block; }
-  #chat.active { display: flex; flex-direction: column; padding: 0; }
-  #messages { flex: 1; overflow: auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 10px; }
-  .msg { max-width: 75%; padding: 9px 13px; border-radius: 12px; white-space: pre-wrap; }
-  .msg.user { align-self: flex-end; background: #0c4a6e; border-bottom-right-radius: 4px; }
-  .msg.jarvis { align-self: flex-start; background: var(--panel2); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
-  .msg .meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
-  .composer { display: flex; gap: 8px; padding: 14px 22px; border-top: 1px solid var(--line); background: var(--panel); }
-  input, select, textarea { background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 8px;
-                            padding: 9px 11px; font: inherit; }
-  input:focus, select:focus { outline: 1px solid var(--accent); }
-  .composer input { flex: 1; }
-  button.btn { background: var(--accent2); color: #001018; border: 0; border-radius: 8px; padding: 9px 14px; cursor: pointer;
-               font: inherit; font-weight: 600; }
-  button.btn:hover { background: var(--accent); }
-  button.ghost { background: var(--panel2); color: var(--text); border: 1px solid var(--line); }
-  button.ghost:hover { border-color: var(--accent); background: var(--panel2); }
-  button.mic { width: 42px; padding: 0; font-size: 18px; }
-  button.icon { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 15px; padding: 4px 6px; }
-  button.icon:hover { color: var(--bad); }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
-  .card h3 { margin: 0 0 10px; font-size: 14px; color: var(--accent); font-weight: 600; }
-  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .row input[type=text] { flex: 1; min-width: 200px; }
-  .list { display: flex; flex-direction: column; gap: 6px; }
-  .item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: var(--panel2); border-radius: 9px; border: 1px solid transparent; }
-  .item:hover { border-color: var(--line); }
-  .item .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .item.done .grow { text-decoration: line-through; color: var(--muted); }
-  .chip { font-size: 12px; padding: 1px 8px; border-radius: 10px; background: #0c4a6e88; color: #bae6fd; white-space: nowrap; }
-  .chip.overdue { background: #7f1d1d; color: #fecaca; }
-  .chip.today { background: #78350f; color: #fde68a; }
-  .muted { color: var(--muted); }
-  .grid2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
-  .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
-  .field label { color: var(--muted); font-size: 12px; }
-  .switch { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; cursor: pointer; }
-  .skill { padding: 8px 0; border-bottom: 1px dashed var(--line); }
-  .skill:last-child { border: 0; }
-  .skill b { font-weight: 600; }
-  .ex { color: var(--muted); font-size: 12.5px; }
-  pre.dict { white-space: pre-wrap; background: var(--panel2); padding: 12px; border-radius: 8px; max-height: 50vh; overflow: auto; }
-  .modes { display: flex; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 2px; }
-  .modes button { background: none; border: 0; color: var(--muted); padding: 6px 10px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 13px; }
-  .modes { max-width: 52vw; overflow-x: auto; }
-  .modes button { white-space: nowrap; }
-  .modes button.on { background: var(--accent2); color: #001018; font-weight: 600; }
-  .dayhead { color: var(--accent); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 10px 2px 4px; }
-  .dayhead.overdue { color: var(--bad); }
-  .toast { position: fixed; bottom: 18px; right: 18px; background: var(--panel2); border: 1px solid var(--accent); padding: 10px 14px;
-           border-radius: 10px; opacity: 0; transition: opacity .3s; pointer-events: none; }
-  .toast.show { opacity: 1; }
-  .hint { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; }
-  ::-webkit-scrollbar { width: 10px; } ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
+:root {
+  --accent: 79, 209, 255;          /* chosen neon (rgb) — set by JS from ⚙ Внешний вид */
+  --c: var(--accent);              /* current state colour */
+  --glass: .72;                    /* panel opacity */
+  --bg: #03060b; --text: #d6ecff; --muted: #7b93a8; --line: rgba(140, 200, 255, .14);
+  --amber: #ffb547; --red: #ff5468; --green: #3ee6a1;
+  --mono: "Cascadia Mono", Consolas, monospace; --r: 14px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 15px/1.45 "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+input, select, textarea { font: inherit; color: var(--text); background: rgba(18, 30, 44, .9); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; width: 100%; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: rgba(var(--accent), .6); }
+:focus-visible { outline: 2px solid rgba(var(--accent), .7); outline-offset: 2px; }
+.muted { color: var(--muted); }
+.panel { background: rgba(10, 18, 28, var(--glass)); border: 1px solid var(--line); border-radius: var(--r); backdrop-filter: blur(14px); }
+
+/* ---- background layer ---- */
+#bg { position: fixed; inset: 0; z-index: 0; overflow: hidden;
+  background: radial-gradient(ellipse at 50% 38%, rgba(var(--c), .12), transparent 58%),
+              radial-gradient(ellipse at 15% 90%, rgba(var(--accent), .06), transparent 50%), linear-gradient(160deg, #060b12, #020407 70%); }
+#bg video, #bg img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+#bg .dim { position: absolute; inset: 0; background: #000; opacity: .55; }
+#bg::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(0deg, rgba(255,255,255,.012) 0 1px, transparent 1px 3px); }
+
+/* ---- header ---- */
+header { position: fixed; top: 0; left: 0; right: 0; z-index: 6; display: flex; align-items: center; gap: 12px; padding: 12px 16px; }
+.brand { font: 600 12px var(--mono); letter-spacing: .32em; color: rgb(var(--accent)); text-shadow: 0 0 12px rgba(var(--accent), .6); white-space: nowrap; }
+.pill { font: 600 11px var(--mono); letter-spacing: .08em; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
+.pill.ok { color: var(--green); border-color: rgba(62, 230, 161, .35); }
+.pill.warn { color: var(--amber); border-color: rgba(255, 181, 71, .35); }
+.pill.bad { color: var(--red); border-color: rgba(255, 84, 104, .35); }
+#personas { display: flex; gap: 4px; padding: 3px; border-radius: 999px; }
+#personas button { padding: 5px 12px; border-radius: 999px; font-size: 13px; color: var(--muted); }
+#personas button.on { background: rgb(var(--accent)); color: #021018; box-shadow: 0 0 16px rgba(var(--accent), .45); }
+#personas button:not(.on):hover { color: var(--text); }
+.spacer { flex: 1; }
+#tele { font: 11px var(--mono); color: var(--muted); white-space: nowrap; cursor: pointer; }
+#tele b { color: var(--text); font-weight: 600; }
+.tools { display: flex; gap: 2px; }
+.tools button { height: 34px; padding: 0 10px; border-radius: 10px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+.tools button:hover { color: var(--text); background: rgba(255, 255, 255, .06); }
+
+/* ---- tasks widget ---- */
+#tasks { position: fixed; left: 16px; top: 74px; width: 290px; z-index: 3; padding: 12px 14px; }
+.wtitle { font: 600 11px var(--mono); letter-spacing: .2em; text-transform: uppercase; color: rgb(var(--accent)); display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.wtitle button { color: var(--muted); font-size: 16px; line-height: 1; }
+.task { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-top: 1px solid rgba(255,255,255,.04); font-size: 14px; }
+.task:first-of-type { border-top: 0; }
+.task input { width: 16px; height: 16px; margin-top: 2px; accent-color: rgb(var(--accent)); flex-shrink: 0; }
+.task > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.task > div > span { overflow-wrap: anywhere; }
+.chip { font: 11px var(--mono); color: var(--muted); white-space: nowrap; }
+.chip.over { color: var(--red); } .chip.today { color: var(--amber); }
+#taskAdd { display: none; margin-top: 8px; }
+#focusBar { display: none; margin-top: 10px; font: 12px var(--mono); color: var(--amber); }
+
+/* ---- stage ---- */
+#stage { position: fixed; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; padding-bottom: 130px; pointer-events: none; }
+#reactor { width: min(44vh, 62vw); height: min(44vh, 62vw); cursor: pointer; pointer-events: auto; }
+#state { margin-top: 4px; font: 12px var(--mono); letter-spacing: .3em; text-transform: uppercase; color: rgb(var(--c)); }
+#subs { min-height: 92px; width: min(760px, 90vw); margin-top: 16px; text-align: center; }
+#you { color: var(--muted); font-size: 14px; transition: opacity .8s; }
+#him { font-size: 19px; margin-top: 6px; transition: opacity .8s; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 12px rgba(0,0,0,.6); }
+.fade { opacity: 0; }
+
+/* ---- omnibar ---- */
+#omni { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); width: min(720px, 92vw); z-index: 6; }
+#omni .box { display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 16px; border-radius: 16px; }
+#omni .box:focus-within { border-color: rgba(var(--accent), .55); box-shadow: 0 0 24px rgba(var(--accent), .15); }
+#q { flex: 1; min-width: 0; background: none; border: 0; padding: 9px 0; font-size: 16px; }
+#q::placeholder { color: #50677a; }
+#omni .box > button { height: 38px; min-width: 38px; padding: 0 9px; border-radius: 11px; font-size: 15px; color: var(--muted); white-space: nowrap; }
+#omni .box > button:hover { background: rgba(255,255,255,.07); color: var(--text); }
+#mic.on { color: #021018 !important; background: rgb(var(--accent)) !important; }
+#sugg { margin-bottom: 8px; overflow: hidden; display: none; }
+#sugg.show { display: block; }
+#sugg div { padding: 9px 16px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; }
+#sugg div.sel, #sugg div:hover { background: rgba(var(--accent), .12); }
+#sugg kbd { font: 12px var(--mono); color: var(--muted); }
+.hint { text-align: center; font: 11px var(--mono); color: #4a6072; margin-top: 7px; }
+
+/* ---- cards ---- */
+#cards { position: fixed; right: 16px; top: 74px; bottom: 110px; width: 320px; display: flex; flex-direction: column; gap: 10px; z-index: 3; overflow: hidden; }
+.card { padding: 12px 14px; animation: in .35s ease; transition: opacity .5s, transform .5s; flex-shrink: 0; border-left: 2px solid rgb(var(--accent)); }
+.card.out { opacity: 0; transform: translateX(30px); }
+.card h4 { margin: 0 0 8px; font: 600 11px var(--mono); letter-spacing: .2em; text-transform: uppercase; color: rgb(var(--accent)); display: flex; justify-content: space-between; }
+.card h4 button { color: var(--muted); }
+.li { display: flex; gap: 8px; justify-content: space-between; align-items: center; padding: 4px 0; border-top: 1px solid rgba(255,255,255,.04); font-size: 14px; }
+.li:first-of-type { border-top: 0; }
+.li span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.pre { white-space: pre-wrap; font-size: 14px; max-height: 50vh; overflow-y: auto; }
+@keyframes in { from { opacity: 0; transform: translateX(30px); } }
+
+/* ---- drawers ---- */
+.drawer { position: fixed; top: 0; bottom: 0; width: min(440px, 94vw); z-index: 10; padding: 18px 20px 40px; overflow-y: auto;
+  background: rgba(7, 12, 19, .97); border: 0 solid var(--line); transition: transform .28s ease; }
+.drawer.right { right: 0; border-left-width: 1px; transform: translateX(105%); }
+.drawer.left { left: 0; border-right-width: 1px; transform: translateX(-105%); }
+.drawer.open { transform: none; }
+.drawer h3 { margin: 0 0 4px; font-size: 18px; display: flex; justify-content: space-between; align-items: center; }
+.drawer h3 button { color: var(--muted); font-size: 16px; }
+details { border-top: 1px solid var(--line); padding: 4px 0; }
+summary { cursor: pointer; padding: 12px 0; font: 600 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); list-style: none; display: flex; justify-content: space-between; }
+summary::after { content: "+"; } details[open] summary::after { content: "–"; }
+details[open] summary { color: rgb(var(--accent)); }
+.sec { display: flex; flex-direction: column; gap: 10px; padding-bottom: 14px; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row > input, .row > select { flex: 1; min-width: 0; }
+.btn { padding: 8px 14px; border-radius: 10px; background: rgb(var(--accent)); color: #021018; font-weight: 600; white-space: nowrap; }
+.btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 400; }
+.btn.danger { background: transparent; color: var(--red); border: 1px solid rgba(255, 84, 104, .35); font-weight: 400; }
+.note { font-size: 12.5px; color: var(--muted); }
+.note a { color: rgb(var(--accent)); }
+label.lbl { font-size: 12.5px; color: var(--muted); display: block; margin-bottom: 4px; }
+.sw { display: flex; align-items: flex-start; gap: 12px; padding: 6px 0; cursor: pointer; }
+.sw input { display: none; }
+.sw .t { width: 34px; height: 20px; border-radius: 10px; background: #233140; position: relative; flex-shrink: 0; margin-top: 2px; transition: .2s; }
+.sw .t::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #8aa0b4; transition: .2s; }
+.sw input:checked + .t { background: rgb(var(--accent)); }
+.sw input:checked + .t::after { left: 17px; background: #021018; }
+.sw small { display: block; color: var(--muted); font-size: 12px; }
+.swatches { display: flex; gap: 10px; }
+.swatches button { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; }
+.swatches button.on { border-color: #fff; box-shadow: 0 0 14px currentColor; }
+.keyrow { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.macro { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.macro .head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.act { display: grid; grid-template-columns: 150px 1fr auto; gap: 6px; margin-top: 6px; }
+.msg { padding: 8px 0; border-top: 1px solid rgba(255,255,255,.05); font-size: 14px; }
+.msg.user { color: var(--muted); }
+.msg .meta { font: 11px var(--mono); color: #4a6072; }
+#scrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 9; display: none; }
+#scrim.show { display: block; }
+#toast { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); padding: 8px 16px; font-size: 13px; opacity: 0; transition: .3s; z-index: 20; pointer-events: none; }
+#toast.show { opacity: 1; }
+@media (max-width: 1250px) { .lbl2 { display: none; } }
+@media (max-width: 1100px) { #cards { width: 270px; } #tasks { width: 250px; } #tele { font-size: 10px; } }
+@media (max-width: 900px) { #cards, #tasks, #tele { display: none; } #personas button { padding: 5px 8px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 </head>
 <body>
-<aside>
-  <div class="brand"><div id="orb" class="orb"></div><div><h1>JARVIS</h1><small id="statusText">запуск…</small></div></div>
-  <nav id="nav">
-    <button onclick="location.href='/hud'" title="Вернуться в HUD">◉ HUD</button>
-    <button data-s="chat" class="active">💬 Чат</button>
-    <button data-s="profiles">🎛 Режимы</button>
-    <button data-s="tasks">✅ Дела <span class="badge" id="taskBadge"></span></button>
-    <button data-s="reminders">⏰ Напоминания <span class="badge" id="remBadge"></span></button>
-    <button data-s="notes">🗒 Заметки</button>
-    <button data-s="connections">🔌 Подключения</button>
-    <button data-s="links">🔗 Ссылки и программы</button>
-    <button data-s="skills">🧠 Что я умею</button>
-    <button data-s="recordings">🎙 Записи</button>
-    <button data-s="dictations">📝 Диктовки</button>
-    <button data-s="settings">⚙️ Настройки</button>
-  </nav>
-  <div class="side-foot" id="heard" style="color:var(--accent);min-height:34px"></div>
-  <div class="side-foot">«Джарвис, …» или «Hey Jarvis»<br>Ctrl+Alt+J — открыть окно</div>
+<div id="bg"><div class="dim" id="dim"></div></div>
+
+<header>
+  <div class="brand">J.A.R.V.I.S</div>
+  <span class="pill" id="link">…</span>
+  <div id="personas" class="panel"></div>
+  <span class="pill warn" id="focusPill" hidden>ФОКУС</span>
+  <div class="spacer"></div>
+  <div id="tele" title="Нажмите — подробности">—</div>
+  <div class="tools">
+    <button id="macBtn" title="Макросы">⚡<span class="lbl2"> Макросы</span></button>
+    <button id="histBtn" title="История (Ctrl+H)">🕘</button>
+    <button id="setBtn" title="Настройки (Ctrl+,)">⚙<span class="lbl2"> Настройки</span></button>
+    <button id="trayBtn" title="Свернуть в трей — Джарвис продолжит слушать">⤓<span class="lbl2"> Трей</span></button>
+  </div>
+</header>
+
+<section id="tasks" class="panel" aria-label="Оперативные задачи">
+  <div class="wtitle"><span>Задачи</span><button id="taskPlus" title="Добавить дело">+</button></div>
+  <div id="taskList"></div>
+  <div id="taskAdd"><input id="taskInput" placeholder="Что сделать? Enter — добавить" autocomplete="off"></div>
+  <div id="focusBar"></div>
+</section>
+
+<div id="stage">
+  <canvas id="reactor" title="Нажмите, чтобы сказать команду"></canvas>
+  <div id="state">запуск</div>
+  <div id="subs"><div id="you"></div><div id="him"></div></div>
+</div>
+
+<div id="cards"></div>
+
+<div id="omni">
+  <div id="sugg" class="panel"></div>
+  <div class="box panel">
+    <input id="q" autocomplete="off" placeholder="Скажите «Эй, Джарвис» или напишите…   / — разделы">
+    <button id="eyeBtn" title="Что на экране">👁 Экран</button>
+    <button id="mic" title="Говорить">🎙</button>
+    <button id="quickMac" title="Запустить макрос">⚡</button>
+    <button id="hush" title="Замолчать">⏹</button>
+  </div>
+  <div class="hint">Enter — выполнить · / — разделы · Ctrl+K — сюда · Ctrl+Alt+Space — капсула поверх игр</div>
+</div>
+
+<div id="scrim"></div>
+
+<aside class="drawer left" id="history"><h3>История <button onclick="closeAll()" aria-label="Закрыть">✕</button></h3><div id="histList"></div></aside>
+
+<aside class="drawer right" id="macros">
+  <h3>⚡ Макросы <button onclick="closeAll()" aria-label="Закрыть">✕</button></h3>
+  <p class="note">Своя фраза → цепочка действий. Скажите фразу (или «Джарвис, …фраза») — Джарвис выполнит всё по порядку.</p>
+  <div id="macList" style="display:flex;flex-direction:column;gap:10px"></div>
+  <button class="btn" style="margin-top:12px" onclick="newMacro()">+ Новый макрос</button>
 </aside>
-<main>
-  <header>
-    <h2 id="title">Чат</h2><div class="spacer"></div>
-    <div class="modes" id="modes"></div>
-    <button class="btn ghost" id="briefBtn" title="Голосовой отчёт">📋 Отчёт</button>
-    <button class="btn ghost" id="stopBtn" title="Замолчать">🔇 Стоп</button>
-    <button class="btn" id="talkBtn">🎤 Говорить</button>
-  </header>
 
-  <section id="profiles" class="section">
-    <div class="card"><h3>Режимы</h3>
-      <div class="grid2" id="profCards" style="grid-template-columns:repeat(auto-fill,minmax(170px,1fr))"></div>
-      <div class="row" style="margin-top:10px"><input type="text" id="newProfName" placeholder="Название своего режима" style="max-width:260px">
-        <button class="btn ghost" id="newProfBtn">＋ Создать режим</button>
-        <label class="switch" style="margin:0 0 0 auto"><input type="checkbox" id="autoGame"> Включать «Игру» автоматически, когда запущена игра</label></div>
-      <p class="hint">Голосом: «Режим работа», «Включи режим учёбы», «Ночной режим», «Какой сейчас режим?», «Что сейчас включено?», «Выключи напоминания о перерыве», «Включи не беспокоить».</p></div>
-    <div class="card" id="profEditor"></div>
-    <div class="card"><h3>Расписание (режим включается сам)</h3><div class="list" id="schedList"></div>
-      <div class="row" style="margin-top:8px"><button class="btn ghost" id="schedAdd">＋ Добавить правило</button><button class="btn" id="schedSave">Сохранить расписание</button></div>
-      <p class="hint">Например: «Ночь» с 23 до 8 каждый день, «Работа» с 9 до 18 по будням. Если вы сами выбрали режим — он действует до следующего правила.</p></div>
-  </section>
-
-  <section id="chat" class="section active">
-    <div id="messages"></div>
-    <div class="composer">
-      <input id="cmd" type="text" placeholder="Напишите команду…  (например: «Добавь дело купить хлеб завтра в 10»)" autocomplete="off">
-      <label class="switch" title="Отвечать голосом"><input type="checkbox" id="speakToggle"> 🔊</label>
-      <button class="btn" id="sendBtn">Отправить</button>
-    </div>
-  </section>
-
-  <section id="tasks" class="section">
-    <div class="card"><h3>Новое дело</h3>
-      <div class="row"><input type="text" id="taskText" placeholder="Что нужно сделать">
-        <input type="datetime-local" id="taskDue" title="Срок (необязательно)">
-        <button class="btn" id="taskAdd">Добавить</button></div>
-      <p class="hint">Джарвис напомнит за несколько минут до срока, в сам срок и будет повторять, пока дело не выполнено. Голосом: «Добавь дело … завтра в 10».</p>
-    </div>
-    <div class="card"><h3>Открытые</h3><div class="list" id="openTasks"></div></div>
-    <div class="card"><h3>Выполненные</h3><div class="list" id="doneTasks"></div></div>
-  </section>
-
-  <section id="notes" class="section">
-    <div class="card"><h3>Новая заметка</h3>
-      <div class="row"><input type="text" id="noteText" placeholder="Что запомнить"><button class="btn" id="noteAdd">Сохранить</button></div>
-      <p class="hint">Голосом: «Запиши заметку …», «Прочитай заметки», «Найди в заметках …», «Удали последнюю заметку», «Удали заметку 2».</p></div>
-    <div class="card"><h3>Заметки</h3><div class="list" id="noteList"></div></div>
-  </section>
-
-  <section id="reminders" class="section">
-    <div class="card"><h3>Напоминания и таймеры</h3><div class="list" id="remList"></div>
-      <p class="hint">Голосом: «Напомни через 10 минут выпить воду», «Поставь таймер на 5 минут», «10 daqiqadan keyin … eslat».</p></div>
-  </section>
-
-  <section id="connections" class="section">
-    <p class="muted" style="margin-top:0">Пароли и ключи хранятся в защищённом хранилище Windows (Диспетчер учётных данных), а не в файлах. Всё работает только на этом ноутбуке.</p>
-    <div class="grid2" id="connGrid"></div>
-  </section>
-
-  <section id="links" class="section">
-    <div class="card"><h3>Мои ссылки и программы</h3>
-      <div class="row"><input type="text" id="scName" placeholder="Название (что вы будете говорить), напр. «работа»" style="max-width:280px">
-        <input type="text" id="scTarget" placeholder="Ссылка https://… или путь к программе C:\…\app.exe">
-        <button class="btn" id="scAdd">Сохранить</button></div>
-      <p class="hint">Потом скажите «Открой работа» / «ishni och». Ещё можно: скопировать ссылку и сказать «Сохрани ссылку как …» или «Открой ссылку».</p>
-      <div class="list" id="scList" style="margin-top:10px"></div></div>
-  </section>
-
-  <section id="skills" class="section">
-    <div class="card"><h3>Добавить свою возможность</h3>
-      <p class="muted" style="margin:0 0 10px">Скопируйте <code>plugins\_template.py</code>, впишите фразы на русском и узбекском и что делать, затем нажмите «Перезагрузить навыки».</p>
-      <div class="row"><button class="btn ghost" id="openFolder">📂 Открыть папку Джарвиса</button>
-        <button class="btn" id="reloadBtn">🔄 Перезагрузить навыки</button></div></div>
-    <div class="grid2" id="skillGrid"></div>
-  </section>
-
-  <section id="recordings" class="section">
-    <div class="card"><h3>Запись голоса</h3>
-      <div class="row"><button class="btn" id="recBtn">⏺ Начать запись</button><span id="recInfo" class="muted"></span></div>
-      <p class="hint">Голосом: «Джарвис, запись» … «стоп». Сохраняется всё до последнего слова (кроме самого «стоп»), плюс текстовая расшифровка.</p></div>
-    <div class="card"><h3>Мои записи</h3><div class="list" id="recList"></div><pre class="dict" id="recText" style="display:none"></pre></div>
-  </section>
-
-  <section id="dictations" class="section">
-    <div class="card"><h3>Диктовки</h3><p class="hint">Скажите «Джарвис, начни диктовку» … «закончи диктовку».</p>
-      <div class="list" id="dictList"></div><pre class="dict" id="dictView" style="display:none"></pre></div>
-  </section>
-
-  <section id="settings" class="section"><div class="grid2" id="settingsGrid"></div></section>
-</main>
-<div class="toast" id="toast"></div>
+<aside class="drawer right" id="settings">
+  <h3>⚙ Настройки <button onclick="closeAll()" aria-label="Закрыть">✕</button></h3>
+  <div id="setBody"></div>
+</aside>
+<div id="toast" class="panel"></div>
 
 <script>
 const $ = (s) => document.querySelector(s);
-const STATUS = { taping: "🔴 идёт запись", listening: "слушаю", recording: "говорите…", thinking: "думаю…", speaking: "говорю", starting: "запуск…" };
-const TITLES = { profiles: "Режимы и функции", notes: "Заметки", recordings: "Записи", chat: "Чат", tasks: "Дела", reminders: "Напоминания", connections: "Подключения", links: "Ссылки и программы", skills: "Что я умею", dictations: "Диктовки", settings: "Настройки" };
-let state = null;
-
-function toast(t) { const el = $("#toast"); el.textContent = t; el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 2200); }
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 async function api(path, method = "GET", body) {
   const r = await fetch(path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
   return r.headers.get("content-type")?.includes("json") ? r.json() : r.text();
 }
-function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
-function setStatus(s) { $("#orb").className = "orb " + s; $("#statusText").textContent = STATUS[s] || s; }
+function toast(t) { const el = $("#toast"); el.textContent = t; el.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 2600); }
+const store = { get(k, d) { try { const v = localStorage.getItem("j3." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+                set(k, v) { try { localStorage.setItem("j3." + k, JSON.stringify(v)); } catch {} } };
+window.store = store;
 
-document.querySelectorAll("#nav button[data-s]").forEach((b) => b.onclick = () => {
-  document.querySelectorAll("#nav button").forEach((x) => x.classList.toggle("active", x === b));
-  document.querySelectorAll(".section").forEach((s) => s.classList.toggle("active", s.id === b.dataset.s));
-  $("#title").textContent = TITLES[b.dataset.s];
-});
+let V = null, state = null, prof = null, conn = null, macros = null, history = [], status = "starting", game = false, lastAct = 0;
 
-// ---- chat ----
-function addMsg(m) {
-  const box = $("#messages");
-  const div = document.createElement("div");
-  div.className = "msg " + (m.role === "user" ? "user" : "jarvis");
-  div.innerHTML = esc(m.text) + `<div class="meta">${esc(m.time || "")}${m.source ? " · " + esc(m.source) : ""}</div>`;
-  box.appendChild(div); box.scrollTop = box.scrollHeight;
+// ================= accent & look =================
+const ACCENTS = { cyan: "79,209,255", emerald: "62,230,161", amber: "255,181,71", red: "255,84,104", violet: "176,132,255" };
+const ACCENT_NAMES = { cyan: "Циан", emerald: "Изумруд", amber: "Янтарь", red: "Красный", violet: "Фиолетовый" };
+function applyLook() {
+  const ui = V?.ui || {}, root = document.documentElement.style;
+  root.setProperty("--accent", ACCENTS[ui.accent] || ACCENTS.cyan);
+  root.setProperty("--glass", ui.glass ?? .72);
+  const bg = $("#bg"), cur = bg.querySelector("video,img");
+  const want = ui.bg?.url || "";
+  if ((cur?.dataset.src || "") !== want) {
+    cur?.remove();
+    if (ui.bg) {
+      const el = document.createElement(ui.bg.kind === "video" ? "video" : "img");
+      el.dataset.src = want; el.src = want;
+      if (ui.bg.kind === "video") { el.muted = true; el.loop = true; el.autoplay = true; el.playsInline = true; }
+      bg.prepend(el);
+    }
+  }
+  $("#dim").style.opacity = ui.bg ? (ui.dim ?? .55) : 0;
 }
-async function send() {
-  const text = $("#cmd").value.trim(); if (!text) return;
-  $("#cmd").value = "";
-  await api("/api/command", "POST", { text, speak: $("#speakToggle").checked });
-}
-$("#sendBtn").onclick = send;
-$("#cmd").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
-$("#talkBtn").onclick = () => api("/api/listen", "POST");
-$("#stopBtn").onclick = () => api("/api/stop", "POST");
 
-// ---- tasks ----
+// ================= state colours =================
+const LOOK = { starting: ["120,140,160", "запуск"], listening: [null, "жду «Джарвис»"], recording: [null, "слушаю вас"],
+  thinking: ["255,181,71", "думаю"], speaking: ["120,170,255", "говорю"], taping: ["255,84,104", "● идёт запись"], game: ["62,230,161", "игровой режим"] };
+function setStatus(s) {
+  status = s || status;
+  const [c, t] = game && status === "listening" ? LOOK.game : (LOOK[status] || LOOK.listening);
+  document.documentElement.style.setProperty("--c", c || "var(--accent)");
+  $("#state").textContent = t;
+  $("#mic").classList.toggle("on", status === "recording");
+}
+
+// ================= reactor =================
+const cv = $("#reactor"), g = cv.getContext("2d");
+let lvTarget = 0, lv = 0, lastFrame = 0;
+function fit() { const d = devicePixelRatio || 1, r = cv.getBoundingClientRect(); cv.width = r.width * d; cv.height = r.height * d; }
+addEventListener("resize", fit); fit();
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+function rgbOf() { const v = getComputedStyle(document.documentElement).getPropertyValue("--c").trim(); return v.startsWith("var") ? getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() : v; }
+function draw(t) {
+  requestAnimationFrame(draw);
+  const busy = status !== "listening" || lv > .03;
+  if ((!busy || reduce) && t - lastFrame < (reduce ? 200 : 50)) return;
+  lastFrame = t;
+  const W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, R = Math.min(W, H) * .46, s = reduce ? 0 : t / 1000, dpr = devicePixelRatio || 1;
+  const C = rgbOf(), col = (a) => `rgba(${C},${a})`;
+  let target = lvTarget;
+  if (status === "speaking") target = .35 + .25 * Math.sin(s * 9) * Math.sin(s * 3.3);
+  if (status === "thinking") target = .12;
+  lv += (target - lv) * .25;
+  g.clearRect(0, 0, W, H); g.lineCap = "round";
+  const spin = status === "thinking" ? s * .9 : s * .08;
+  for (let i = 0; i < 72; i++) {
+    const a = i / 72 * Math.PI * 2 + spin, long = i % 6 === 0;
+    g.strokeStyle = col(long ? .55 : .18); g.lineWidth = (long ? 2.2 : 1.2) * dpr / 1.5;
+    g.beginPath(); g.moveTo(cx + Math.cos(a) * R * (long ? .9 : .93), cy + Math.sin(a) * R * (long ? .9 : .93));
+    g.lineTo(cx + Math.cos(a) * R * .97, cy + Math.sin(a) * R * .97); g.stroke();
+  }
+  [[.82, .7, 1.1, 3], [.74, -1.2, .7, 2], [.66, 2.1, 1.6, 1.5]].forEach(([rr, sp, len, w], i) => {
+    const k = status === "thinking" ? 3 : 1, a0 = s * sp * k * .6 + i;
+    g.strokeStyle = col(.5 - i * .1); g.lineWidth = w * dpr;
+    g.beginPath(); g.arc(cx, cy, R * rr, a0, a0 + len); g.stroke();
+    g.beginPath(); g.arc(cx, cy, R * rr, a0 + Math.PI, a0 + Math.PI + len * .5); g.stroke();
+  });
+  g.strokeStyle = col(.85); g.lineWidth = 2 * dpr; g.shadowColor = col(.9); g.shadowBlur = 18;
+  g.beginPath();
+  for (let i = 0; i <= 160; i++) {
+    const a = i / 160 * Math.PI * 2;
+    const n = Math.sin(a * 6 + s * 4) * .5 + Math.sin(a * 11 - s * 6.3) * .3 + Math.sin(a * 3 + s * 2.1) * .2;
+    const r = R * (.504 + lv * .16 * n + .006 * Math.sin(a * 4 + s));
+    i ? g.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r) : g.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+  }
+  g.closePath(); g.stroke(); g.shadowBlur = 0;
+  const cr = R * (.3 + lv * .07), grd = g.createRadialGradient(cx, cy, 0, cx, cy, cr * 1.6);
+  grd.addColorStop(0, "rgba(255,255,255,.95)"); grd.addColorStop(.18, col(.95)); grd.addColorStop(.55, col(.25)); grd.addColorStop(1, col(0));
+  g.fillStyle = grd; g.beginPath(); g.arc(cx, cy, cr * 1.6, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = col(.7); g.lineWidth = 1.5; g.beginPath(); g.arc(cx, cy, cr * .62, 0, Math.PI * 2); g.stroke();
+}
+requestAnimationFrame(draw);
+cv.onclick = () => { lastAct = Date.now(); api("/api/listen", "POST"); };
+
+// ================= subtitles =================
+let subTimer;
+function sub(role, text) {
+  const el = role === "user" ? $("#you") : $("#him");
+  el.textContent = role === "user" ? "— " + text : text; el.classList.remove("fade");
+  if (role === "user") $("#him").classList.add("fade");
+  clearTimeout(subTimer);
+  subTimer = setTimeout(() => { $("#you").classList.add("fade"); $("#him").classList.add("fade"); }, role === "user" ? 20000 : 14000);
+}
+
+// ================= cards =================
+const cards = new Map();
+function card(id, title, html, ttl = 16000) {
+  let el = cards.get(id);
+  if (!el) {
+    el = document.createElement("div"); el.className = "card panel";
+    el.onmouseenter = () => clearTimeout(el._t); el.onmouseleave = () => arm(el, id, 6000);
+    $("#cards").prepend(el); cards.set(id, el);
+    while (cards.size > 4) { const [k] = cards.keys(); drop(k); }
+  }
+  el.innerHTML = `<h4>${esc(title)}<button aria-label="Закрыть" onclick="drop('${id}')">✕</button></h4>${html}`;
+  el.classList.remove("out"); arm(el, id, ttl);
+}
+function arm(el, id, ttl) { clearTimeout(el._t); if (ttl) el._t = setTimeout(() => drop(id), ttl); }
+function drop(id) { const el = cards.get(id); if (!el) return; cards.delete(id); el.classList.add("out"); setTimeout(() => el.remove(), 500); }
+window.drop = drop;
+const fmtD = (d) => new Date(d).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 function dueChip(due) {
   if (!due) return "";
   const d = new Date(due), now = new Date();
-  const cls = d < now ? "overdue" : d.toDateString() === now.toDateString() ? "today" : "";
-  const txt = d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-  return `<span class="chip ${cls}">${cls === "overdue" ? "просрочено · " : ""}${txt}</span>`;
+  const cls = d < now ? "over" : d.toDateString() === now.toDateString() ? "today" : "";
+  return `<span class="chip ${cls}">${fmtD(due)}</span>`;
 }
+
+// ================= tasks widget =================
+function openTasks() { return (state?.tasks || []).filter((t) => !t.done).sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999")); }
 function renderTasks() {
-  const open = state.tasks.filter((t) => !t.done).sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
-  const done = state.tasks.filter((t) => t.done).slice(-20).reverse();
-  $("#taskBadge").textContent = open.length || "";
-  const row = (t) => `<div class="item ${t.done ? "done" : ""}">
-      <input type="checkbox" ${t.done ? "checked" : ""} onchange="patchTask('${t.id}', {done: this.checked})">
-      <div class="grow" title="${esc(t.text)}">${esc(t.text)}</div>${dueChip(t.due)}
-      ${t.done ? "" : `<input type="datetime-local" value="${t.due ? t.due.slice(0, 16) : ""}" onchange="patchTask('${t.id}', {due: this.value || null})" title="Изменить срок">`}
-      <button class="icon" title="Удалить" onclick="delTask('${t.id}')">✕</button></div>`;
-  const dayOf = (t) => {
-    if (!t.due) return ["Без срока", ""];
-    const d = new Date(t.due), now = new Date(), today = new Date(now.toDateString());
-    const day = new Date(d.toDateString()), diff = Math.round((day - today) / 864e5);
-    if (d < now && diff <= 0) return [diff < 0 ? "Просрочено" : "Сегодня", diff < 0 ? "overdue" : ""];
-    if (diff === 0) return ["Сегодня", ""];
-    if (diff === 1) return ["Завтра", ""];
-    return [d.toLocaleDateString("ru-RU", { weekday: "long", day: "2-digit", month: "2-digit" }), ""];
-  };
-  let html = "", last = null, n = 0;
-  for (const t of open) {
-    const [head, cls] = dayOf(t);
-    if (head !== last) { html += `<div class="dayhead ${cls}">${esc(head)}</div>`; last = head; }
-    n += 1;
-    html += row(t).replace('<div class="grow"', `<span class="muted" style="min-width:18px">${n}.</span><div class="grow"`);
-  }
-  $("#openTasks").innerHTML = html || `<div class="muted">Открытых дел нет 🎉</div>`;
-  $("#doneTasks").innerHTML = done.map(row).join("") || `<div class="muted">Пока пусто</div>`;
+  const open = openTasks();
+  $("#taskList").innerHTML = open.slice(0, 5).map((t) => `<label class="task"><input type="checkbox" onchange="doneTask('${esc(t.id)}')">
+      <div><span>${esc(t.text)}</span>${dueChip(t.due)}</div></label>`).join("")
+    || `<div class="muted" style="font-size:14px">Дел нет. Скажите «добавь дело …» или нажмите +</div>`;
+  if (open.length > 5) $("#taskList").insertAdjacentHTML("beforeend", `<div class="chip" style="margin-top:6px;cursor:pointer" onclick="PANELS.tasks()">ещё ${open.length - 5} → /дела</div>`);
 }
-window.patchTask = async (id, ch) => { await api(`/api/tasks/${id}`, "PATCH", ch); };
-window.delTask = async (id) => { await api(`/api/tasks/${id}`, "DELETE"); };
-$("#taskAdd").onclick = async () => {
-  const text = $("#taskText").value.trim(); if (!text) return;
-  await api("/api/tasks", "POST", { text, due: $("#taskDue").value || null });
-  $("#taskText").value = ""; $("#taskDue").value = ""; toast("Дело добавлено");
+window.doneTask = async (id) => { await api(`/api/tasks/${id}`, "PATCH", { done: true }); toast("Отмечено выполненным"); };
+$("#taskPlus").onclick = () => { const a = $("#taskAdd"); a.style.display = a.style.display === "block" ? "none" : "block"; $("#taskInput").focus(); };
+$("#taskInput").addEventListener("keydown", async (e) => {
+  if (e.key !== "Enter" || !e.target.value.trim()) return;
+  await api("/api/command", "POST", { text: "добавь дело " + e.target.value.trim() });
+  e.target.value = ""; $("#taskAdd").style.display = "none";
+});
+
+// ================= on-demand panels =================
+const PANELS = {
+  tasks() { const open = openTasks(); card("tasks", `Дела · ${open.length}`, open.map((t, i) => `<div class="li"><span>${i + 1}. ${esc(t.text)}</span>${dueChip(t.due)}</div>`).join("") || `<div class="muted">Открытых дел нет</div>`, 30000); },
+  notes() { const n = state?.notes || []; card("notes", `Память · ${n.length}`, n.slice(-8).reverse().map((x) => `<div class="li"><span>${esc(x.text)}</span></div>`).join("") || `<div class="muted">Скажите «запомни …»</div>`, 30000); },
+  reminders() { const r = state?.reminders || []; card("reminders", "Напоминания", r.slice(0, 8).map((x, i) => `<div class="li"><span>${esc(x.text)}</span><span class="chip">${fmtD(x.at)}</span><button aria-label="Удалить" onclick="api('/api/reminders/${i}','DELETE')">✕</button></div>`).join("") || `<div class="muted">Напоминаний нет</div>`, 30000); },
+  records() {
+    const r = state?.recordings || [];
+    card("records", "Записи", (state?.recording_now ? `<button class="btn danger" onclick="api('/api/record/stop','POST')">⏹ Остановить запись</button>` : `<button class="btn ghost" onclick="api('/api/record/start','POST')">⏺ Начать запись</button>`) +
+      r.slice(0, 6).map((x) => `<div class="li" style="flex-wrap:wrap"><span>${esc(x.name.replace(".wav", "").replace("_", " "))}</span><audio controls preload="none" src="/api/recording/${encodeURIComponent(x.name)}" style="height:30px;width:100%"></audio></div>`).join(""), 0);
+  },
+  history() { openDrawer("history"); }, settings() { openDrawer("settings"); }, macros() { openDrawer("macros"); },
+  screen() { send("что у меня на экране"); },
+  translate() { api("/api/translate", "POST").then((r) => toast(r.reply)); toast("Перевожу окно…"); },
+  live() { api("/api/translate/live", "POST", { on: !V?.translate_live }).then((r) => toast(r.reply)); },
+  capsule() { api("/api/capsule", "POST"); },
+  system() { teleOpen = true; pollTele(); },
 };
+const SLASH = [["дела", "Все дела", "tasks"], ["память", "Что я запомнил", "notes"], ["напоминания", "Напоминания и таймеры", "reminders"],
+  ["записи", "Записи голоса", "records"], ["экран", "Что на экране (Gemini)", "screen"], ["перевод", "Перевести окно на русский", "translate"],
+  ["живой", "Живой переводчик вкл/выкл", "live"], ["макросы", "Макросы", "macros"], ["история", "История разговора", "history"],
+  ["настройки", "Ключи, характер, вид, подключения", "settings"], ["капсула", "Мини-капсула поверх игр", "capsule"], ["система", "Нагрузка и модели", "system"]];
 
-// ---- notes ----
-function renderNotes() {
-  const notes = state.notes || [];
-  $("#noteList").innerHTML = notes.map((nt, i) => `<div class="item"><span class="muted" style="min-width:22px">${i + 1}.</span>
-      <div class="grow" title="${esc(nt.text)}">${esc(nt.text)}</div><span class="chip">${esc(nt.time)}</span>
-      <button class="icon" onclick="delNote(${i})">✕</button></div>`).reverse().join("") || `<div class="muted">Заметок пока нет</div>`;
+// ================= omnibar =================
+const q = $("#q"); let suggSel = 0;
+function suggestions() {
+  const v = q.value.trim().toLowerCase();
+  if (!v.startsWith("/")) return [];
+  const w = v.slice(1);
+  return SLASH.filter(([k, t]) => k.startsWith(w) || t.toLowerCase().split(/[\s()]+/).some((x) => x.startsWith(w)));
 }
-window.delNote = async (i) => { await api(`/api/notes/${i}`, "DELETE"); };
-$("#noteAdd").onclick = async () => { const t = $("#noteText").value.trim(); if (!t) return; await api("/api/notes", "POST", { text: t }); $("#noteText").value = ""; toast("Сохранено"); };
-// ---- profiles (modes) ----
-let prof = null, editing = null;
-const PERS = [["friend", "🤝 Друг — тепло, на «ты»"], ["work", "💼 Деловой — кратко и по теме"], ["polite", "🎩 Вежливый — учтиво, на «Вы»"]];
-const DAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
-async function loadProfiles() { prof = await api("/api/profiles"); editing = editing && prof.profiles[editing] ? editing : prof.effective; renderProfiles(); }
-async function pAct(action, body) { prof = await api(`/api/profiles/${action}`, "POST", body); renderProfiles(); return prof; }
-window.pAct = pAct;
-function renderMode() {
-  if (!prof) return;
-  $("#modes").innerHTML = Object.entries(prof.profiles).map(([id, p]) =>
-    `<button class="${id === prof.effective ? "on" : ""}" title="${esc(p.title)}" onclick="pAct('activate',{id:'${id}'})">${p.icon || "⭐"} ${esc(p.title)}</button>`).join("");
+function renderSugg() {
+  const list = suggestions(); suggSel = Math.min(suggSel, Math.max(0, list.length - 1));
+  $("#sugg").innerHTML = list.map(([k, t, p], i) => `<div class="${i === suggSel ? "sel" : ""}" data-p="${p}"><span>${esc(t)}</span><kbd>/${k}</kbd></div>`).join("");
+  $("#sugg").classList.toggle("show", list.length > 0);
+  $("#sugg").querySelectorAll("div").forEach((d) => d.onclick = () => runPanel(d.dataset.p));
 }
-window.editProfile = (id) => { editing = id; renderProfiles(); };
-function renderProfiles() {
-  if (!prof) return;
-  renderMode();
-  $("#autoGame").checked = prof.auto_game;
-  $("#profCards").innerHTML = Object.entries(prof.profiles).map(([id, p]) => {
-    const on = Object.values(p.features).filter(Boolean).length;
-    const auto = id === prof.effective && id !== prof.active ? " · авто" : "";
-    const pers = (PERS.find((x) => x[0] === p.personality) || ["", ""])[1].split(" — ")[0];
-    return `<div class="item" style="flex-direction:column;align-items:flex-start;cursor:pointer;border-color:${id === editing ? "var(--accent)" : "transparent"}" onclick="editProfile('${id}')">
-      <div style="font-size:22px">${p.icon || "⭐"}</div><b>${esc(p.title)}</b>
-      <span class="muted" style="font-size:12px">${pers} · функций: ${on}${auto}</span>
-      ${id === prof.effective ? `<span class="chip" style="background:#065f46;color:#a7f3d0">сейчас включён</span>`
-        : `<button class="btn ghost" style="padding:4px 10px" onclick="event.stopPropagation();pAct('activate',{id:'${id}'})">Включить</button>`}</div>`;
-  }).join("");
-  const id = editing, p = prof.profiles[id];
-  if (!p) return;
-  const feats = Object.entries(prof.features).map(([k, f]) => `<label class="switch" title="${esc(f.hint)}">
-      <input type="checkbox" ${p.features[k] ? "checked" : ""} onchange="pAct('update',{id:'${id}',feature:'${k}',value:this.checked})">
-      <span>${esc(f.title)}${f.hint ? `<br><span class="muted" style="font-size:12px">${esc(f.hint)}</span>` : ""}</span></label>`).join("");
-  const actionsText = esc((p.actions || []).join("\n"));
-  $("#profEditor").innerHTML = `<h3>${p.icon || "⭐"} Настройки режима «${esc(p.title)}»</h3>
-    <div class="grid2">
-      <div><div class="field"><label>Название</label><input type="text" value="${esc(p.title)}" onchange="pAct('update',{id:'${id}',title:this.value})"></div>
-        <div class="field"><label>Значок (эмодзи)</label><input type="text" value="${esc(p.icon || "")}" maxlength="4" onchange="pAct('update',{id:'${id}',icon:this.value})"></div>
-        <div class="field"><label>Характер</label><select onchange="pAct('update',{id:'${id}',personality:this.value})">${PERS.map(([val, t]) =>
-          `<option value="${val}" ${p.personality === val ? "selected" : ""}>${t}</option>`).join("")}</select></div>
-        <div class="field"><label>Что сказать при включении</label><input type="text" value="${esc(p.say || "")}" onchange="pAct('update',{id:'${id}',say:this.value})"></div>
-        <div class="field"><label>Открыть при включении (программы, сайты, папки — каждое с новой строки)</label>
-          <textarea rows="3" id="profActions">${actionsText}</textarea>
-          <span class="hint">Например: telegram · https://mail.google.com · C:\Users\…\Documents</span></div>
-        <div class="row">${prof.builtin.includes(id) ? `<button class="btn ghost" onclick="if(confirm('Вернуть настройки режима по умолчанию?'))pAct('reset',{id:'${id}'})">↺ Сбросить</button>`
-          : `<button class="btn ghost" onclick="if(confirm('Удалить режим?')){editing=null;pAct('delete',{id:'${id}'})}">🗑 Удалить режим</button>`}</div></div>
-      <div><label class="muted" style="font-size:12px">Функции — включайте и выключайте:</label>${feats}</div>
-    </div>`;
-  $("#profActions").onchange = (e) => pAct("update", { id, actions: e.target.value.split("\n").map((x) => x.trim()).filter(Boolean) });
-  $("#schedList").innerHTML = (prof.schedule || []).map((r, i) => `<div class="item" data-i="${i}">
-      <input type="checkbox" class="s-en" ${r.enabled ? "checked" : ""} title="Включено">
-      <select class="s-prof">${Object.entries(prof.profiles).map(([pid, pp]) => `<option value="${pid}" ${pid === r.profile ? "selected" : ""}>${esc(pp.title)}</option>`).join("")}</select>
-      с <input class="s-from" type="number" min="0" max="23" value="${r.from}" style="width:64px"> до <input class="s-to" type="number" min="0" max="23" value="${r.to}" style="width:64px">
-      <span class="s-days">${DAYS.map((d, di) => `<label style="font-size:12px"><input type="checkbox" value="${di}" ${!r.days || r.days.includes(di) ? "checked" : ""}>${d}</label>`).join(" ")}</span>
-      <button class="icon" onclick="this.closest('.item').remove()">✕</button></div>`).join("") || `<div class="muted">Правил нет</div>`;
-}
-function readSchedule() {
-  return [...document.querySelectorAll("#schedList .item")].map((el) => {
-    const days = [...el.querySelectorAll(".s-days input:checked")].map((x) => +x.value);
-    return { enabled: el.querySelector(".s-en").checked, profile: el.querySelector(".s-prof").value,
-             from: +el.querySelector(".s-from").value, to: +el.querySelector(".s-to").value, days: days.length === 7 ? null : days };
-  });
-}
-$("#schedAdd").onclick = () => { prof.schedule = [...readSchedule(), { enabled: true, profile: "work", from: 9, to: 18, days: [0, 1, 2, 3, 4] }]; renderProfiles(); };
-$("#schedSave").onclick = async () => { await pAct("schedule", { schedule: readSchedule() }); toast("Расписание сохранено"); };
-$("#autoGame").onchange = (e) => pAct("auto_game", { value: e.target.checked });
-$("#newProfBtn").onclick = async () => { const r = await pAct("new", { title: $("#newProfName").value.trim(), base: editing || "normal" }); editing = r.message; $("#newProfName").value = ""; renderProfiles(); };
-
-// ---- reminders ----
-function renderReminders() {
-  $("#remBadge").textContent = state.reminders.length || "";
-  $("#remList").innerHTML = state.reminders.map((r, i) => `<div class="item"><span class="chip">${new Date(r.at).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
-      <div class="grow">${r.kind === "timer" ? "⏱ Таймер" : esc(r.text)}</div><button class="icon" onclick="delRem(${i})">✕</button></div>`).join("")
-    || `<div class="muted">Напоминаний нет</div>`;
-}
-window.delRem = async (i) => { await api(`/api/reminders/${i}`, "DELETE"); };
-
-// ---- shortcuts ----
-function renderShortcuts() {
-  const entries = Object.entries(state.shortcuts);
-  $("#scList").innerHTML = entries.map(([n, t]) => `<div class="item"><b>${esc(n)}</b><div class="grow muted">${esc(t)}</div>
-      <button class="icon" onclick="delSc('${esc(n)}')">✕</button></div>`).join("") || `<div class="muted">Пока нет своих ссылок</div>`;
-}
-window.delSc = async (n) => { await api(`/api/shortcuts/${encodeURIComponent(n)}`, "DELETE"); };
-$("#scAdd").onclick = async () => {
-  const name = $("#scName").value.trim(), target = $("#scTarget").value.trim(); if (!name || !target) return;
-  await api("/api/shortcuts", "POST", { name, target }); $("#scName").value = ""; $("#scTarget").value = ""; toast("Сохранено");
+function runPanel(p) { q.value = ""; renderSugg(); PANELS[p](); }
+async function send(text) { lastAct = Date.now(); await api("/api/command", "POST", { text, speak: store.get("speak", false) }); }
+q.addEventListener("input", () => { suggSel = 0; renderSugg(); });
+q.addEventListener("keydown", (e) => {
+  const list = suggestions();
+  if (list.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) { suggSel = (suggSel + (e.key === "ArrowDown" ? 1 : list.length - 1)) % list.length; renderSugg(); e.preventDefault(); return; }
+  if (e.key !== "Enter") return;
+  if (list.length) return runPanel(list[suggSel][2]);
+  const text = q.value.trim(); if (!text) return;
+  q.value = ""; send(text);
+});
+$("#mic").onclick = () => { lastAct = Date.now(); api("/api/listen", "POST"); };
+$("#hush").onclick = () => api("/api/stop", "POST");
+$("#eyeBtn").onclick = () => PANELS.screen();
+$("#quickMac").onclick = async () => {
+  macros = await api("/api/macros");
+  card("quickmac", "Макросы", macros.items.map((m) => `<div class="li"><span>${esc(m.phrase)}</span><button class="btn ghost" onclick="runMacro('${m.id}')">▶</button></div>`).join("")
+    || `<div class="muted">Макросов нет — создайте в ⚡ Макросы</div>`, 20000);
 };
+window.runMacro = (id) => { lastAct = Date.now(); api(`/api/macros/${id}/run`, "POST"); };
 
-// ---- skills ----
-function renderSkills() {
-  const groups = {};
-  state.skills.forEach((s) => (groups[s.module] ||= []).push(s));
-  $("#skillGrid").innerHTML = Object.entries(groups).map(([mod, list]) => `<div class="card"><h3>${esc(mod)}</h3>${list.map((s) =>
-      `<div class="skill"><b>${esc(s.title.ru || s.name)}</b>${s.title.uz && s.title.uz !== s.title.ru ? ` <span class="muted">/ ${esc(s.title.uz)}</span>` : ""}
-       <div class="ex">${(s.examples.ru || []).map((e) => "«" + esc(e) + "»").join(" ")} ${(s.examples.uz || []).map((e) => "«" + esc(e) + "»").join(" ")}</div></div>`).join("")}</div>`).join("");
+// ================= header: personas, link, telemetry =================
+const PERSONAS = [["tactical", "Тактический"], ["coder", "Программист"], ["business", "Бизнес"], ["quiet", "Тихий"], ["custom", "Свой"]];
+function renderHeader() {
+  if (!V) return;
+  $("#personas").innerHTML = PERSONAS.map(([id, t]) => `<button class="${V.persona === id ? "on" : ""}" onclick="setPersona('${id}')">${t}</button>`).join("");
+  const c = V.cloud, link = $("#link");
+  if (c.enabled) { link.textContent = c.error ? "ОБЛАКО: ОШИБКА" : "CLOUD ACTIVE"; link.className = "pill " + (c.error ? "bad" : "ok"); link.title = c.error || `${c.provider || ""} ${c.model || ""}`; }
+  else { link.textContent = "ЛОКАЛЬНО"; link.className = "pill warn"; link.title = "Добавьте ключ Groq в ⚙ Настройки, чтобы освободить видеокарту"; }
+  $("#focusPill").hidden = !V.focus;
 }
-$("#reloadBtn").onclick = async () => { const r = await api("/api/reload", "POST"); toast(r.errors.length ? "Ошибки: " + r.errors.join("; ") : `Загружено навыков: ${r.count}`); load(); };
-$("#openFolder").onclick = () => api("/api/open-folder", "POST");
+window.setPersona = async (id) => { await api("/api/persona", "POST", { persona: id }); if (id === "custom" && !V.custom_persona) { openDrawer("settings"); document.getElementById("secPersona").open = true; } };
+let teleOpen = false;
+async function pollTele() {
+  if (document.hidden) return;
+  try {
+    const t = await api("/api/telemetry");
+    const llm = (t.llm || []).reduce((a, m) => a + m.vram_mb, 0) / 1024, stt = Object.values(t.whisper || {}).includes("cuda");
+    const mine = (llm + (stt ? 1.6 : 0)).toFixed(1);
+    $("#tele").innerHTML = `JARVIS VRAM <b>${mine} GB</b> · ${t.cloud?.enabled ? "<b>CLOUD</b>" : "LOCAL"} · CPU <b>${Math.round(t.cpu)}%</b>`;
+    $("#tele").title = t.gpu ? `Видеокарта всего: ${(t.gpu.vram_used / 1024).toFixed(1)} из ${(t.gpu.vram_total / 1024).toFixed(1)} ГБ (с играми и браузером)` : "";
+    if (teleOpen) {
+      teleOpen = false;
+      const c = t.cloud || {};
+      card("tele", "Система", `<div class="li"><span>Видеопамять Джарвиса</span><span class="chip">${mine} ГБ</span></div>
+        <div class="li"><span>Видеокарта всего</span><span class="chip">${t.gpu ? (t.gpu.vram_used / 1024).toFixed(1) + " / " + (t.gpu.vram_total / 1024).toFixed(1) + " ГБ · " + t.gpu.temp + "°C" : "—"}</span></div>
+        <div class="li"><span>Распознавание речи</span><span class="chip">${c.stt ? "Groq · " + (c.stt_ms || "—") + " мс" : stt ? "Whisper на GPU" : "Whisper на CPU"}</span></div>
+        <div class="li"><span>Мозг</span><span class="chip">${c.enabled ? (c.model || "облако") + (c.ms ? " · " + c.ms + " мс" : "") : (t.llm?.length ? t.llm[0].name : "локальный")}</span></div>
+        <div class="li"><span>Зрение</span><span class="chip">${c.gemini ? "Gemini" : "нет ключа"}</span></div>
+        <div class="li"><span>Процессор / ОЗУ</span><span class="chip">${Math.round(t.cpu)}% · ${t.ram ? t.ram.used_gb + " / " + t.ram.total_gb + " ГБ" : "—"}</span></div>
+        ${c.error ? `<div class="note" style="color:var(--red)">${esc(c.error)}</div>` : ""}`, 25000);
+    }
+  } catch {}
+}
+$("#tele").onclick = () => PANELS.system();
+setInterval(pollTele, 4000); pollTele();
+document.addEventListener("visibilitychange", pollTele);
+$("#trayBtn").onclick = async () => { const r = await api("/api/window/hide", "POST"); if (!r.ok) toast("Закройте окно — Джарвис останется в трее"); };
 
-// ---- recordings ----
-let recording = false;
-function fmtDur(s) { const m = Math.floor(s / 60), r = s % 60; return (m ? m + " мин " : "") + r + " сек"; }
-function renderRecordings() {
-  recording = state.recording_now || recording;
-  $("#recBtn").textContent = recording ? "⏹ Остановить и сохранить" : "⏺ Начать запись";
-  $("#recBtn").style.background = recording ? "var(--bad)" : "";
-  $("#recList").innerHTML = state.recordings.map((r) => `<div class="item" style="flex-wrap:wrap">
-      <div class="grow">🎙 ${esc(r.name.replace(".wav", "").replace("_", " "))} <span class="muted">· ${fmtDur(r.seconds)}</span></div>
-      <audio controls preload="none" src="/api/recording/${encodeURIComponent(r.name)}" style="height:32px"></audio>
-      ${r.has_text ? `<button class="btn ghost" onclick="showRecText('${esc(r.name)}')">📄 Текст</button>` : ""}
-      <button class="icon" title="Удалить" onclick="delRec('${esc(r.name)}')">✕</button></div>`).join("")
-    || `<div class="muted">Записей пока нет</div>`;
+// ================= drawers =================
+function openDrawer(id) {
+  closeAll(); $("#" + id).classList.add("open"); $("#scrim").classList.add("show");
+  if (id === "history") renderHistory();
+  if (id === "macros") loadMacros();
+  if (id === "settings") { loadConn(); loadProfiles(); renderSettings(); }
 }
-$("#recBtn").onclick = async () => {
-  await api(recording ? "/api/record/stop" : "/api/record/start", "POST");
-  recording = !recording; renderRecordings();
+function closeAll() { document.querySelectorAll(".drawer").forEach((d) => d.classList.remove("open")); $("#scrim").classList.remove("show"); }
+window.closeAll = closeAll; window.openDrawer = openDrawer;
+$("#scrim").onclick = closeAll;
+$("#histBtn").onclick = () => openDrawer("history");
+$("#setBtn").onclick = () => openDrawer("settings");
+$("#macBtn").onclick = () => openDrawer("macros");
+function renderHistory() {
+  $("#histList").innerHTML = history.slice().reverse().map((m) => `<div class="msg ${m.role === "user" ? "user" : ""}">${m.role === "user" ? "— " : ""}${esc(m.text)}
+    <div class="meta">${esc(m.time || "")}${m.source ? " · " + esc(m.source) : ""}</div></div>`).join("") || `<div class="muted">Пока пусто</div>`;
+}
+
+// ================= macros editor =================
+async function loadMacros() { macros = await api("/api/macros"); renderMacros(); }
+function actRow(a, i, mi) {
+  return `<div class="act"><select onchange="macEdit(${mi},'type',this.value,${i})">${Object.entries(macros.types).map(([k, t]) => `<option value="${k}" ${a.type === k ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
+    <input value="${esc(a.value)}" placeholder="${esc(PH[a.type] || "")}" onchange="macEdit(${mi},'value',this.value,${i})"><button aria-label="Удалить действие" onclick="macEdit(${mi},'del',null,${i})">✕</button></div>`;
+}
+const PH = { run: "C:\\Games\\game.exe или telegram", url: "https://…", keys: "ctrl+shift+esc", volume: "60", app_volume: "discord=40", say: "Готов к бою, сэр", command: "включи режим игра", wait: "2" };
+function renderMacros() {
+  $("#macList").innerHTML = macros.items.map((m, mi) => `<div class="macro">
+      <div class="head"><input value="${esc(m.phrase)}" placeholder="Фраза, например «боевой режим»" onchange="macEdit(${mi},'phrase',this.value)">
+        <button class="btn ghost" title="Выполнить" onclick="runMacro('${m.id}')">▶</button></div>
+      ${(m.actions || []).map((a, i) => actRow(a, i, mi)).join("")}
+      <div class="row" style="margin-top:8px"><input value="${esc(m.reply || "")}" placeholder="Что сказать в конце (необязательно)" onchange="macEdit(${mi},'reply',this.value)"></div>
+      <div class="row" style="margin-top:8px"><button class="btn ghost" onclick="macEdit(${mi},'add')">+ действие</button><div class="spacer"></div>
+        <button class="btn" onclick="macSave(${mi})">Сохранить</button><button class="btn danger" onclick="macDel(${mi})">Удалить</button></div></div>`).join("")
+    || `<div class="muted">Пока нет макросов. Например: «боевой режим» → запустить CS2, громкость Discord 40, сказать «Готов, сэр».</div>`;
+}
+window.newMacro = () => { macros.items.unshift({ id: "", phrase: "", reply: "", actions: [{ type: "run", value: "" }] }); renderMacros(); };
+window.macEdit = (mi, field, value, i) => {
+  const m = macros.items[mi];
+  if (field === "add") m.actions.push({ type: "say", value: "" });
+  else if (field === "del") m.actions.splice(i, 1);
+  else if (i !== undefined) m.actions[i][field] = value;
+  else m[field] = value;
+  if (field === "add" || field === "del" || field === "type") renderMacros();
 };
-window.delRec = async (n) => { if (confirm("Удалить запись?")) await api(`/api/recording/${encodeURIComponent(n)}`, "DELETE"); };
-window.showRecText = async (n) => {
-  const t = await api(`/api/recording/${encodeURIComponent(n.replace(".wav", ".txt"))}`);
-  $("#recText").style.display = "block"; $("#recText").textContent = t || "Расшифровка ещё готовится…";
-};
+window.macSave = async (mi) => { const m = macros.items[mi]; if (!m.phrase.trim()) return toast("Задайте фразу"); macros.items[mi] = await api("/api/macros", "POST", m); renderMacros(); toast("Макрос сохранён"); };
+window.macDel = async (mi) => { const m = macros.items[mi]; if (!confirm(`Удалить макрос «${m.phrase}»?`)) return; if (m.id) await api(`/api/macros/${m.id}`, "DELETE"); macros.items.splice(mi, 1); renderMacros(); };
 
-// ---- dictations ----
-function renderDictations() {
-  $("#dictList").innerHTML = state.dictations.map((n) => `<div class="item" style="cursor:pointer" onclick="showDict('${esc(n)}')">📄 <div class="grow">${esc(n)}</div></div>`).join("")
-    || `<div class="muted">Диктовок пока нет</div>`;
-}
-window.showDict = async (n) => { const t = await api(`/api/dictation/${encodeURIComponent(n)}`); $("#dictView").style.display = "block"; $("#dictView").textContent = t; };
-
-// ---- settings ----
-function setVal(section, key, value) { api("/api/settings", "POST", { section, key, value }).then(() => toast("Сохранено")); }
-window.setVal = setVal;
-function sw(section, key, label) {
-  const v = state.settings[section]?.[key];
-  return `<label class="switch"><input type="checkbox" ${v !== false ? "checked" : ""} onchange="setVal('${section}','${key}',this.checked)"> ${label}</label>`;
-}
-function inp(section, key, label, type = "text", attrs = "") {
-  const v = state.settings[section]?.[key] ?? "";
-  const conv = type === "number" ? "Number(this.value)" : "this.value";
-  return `<div class="field"><label>${label}</label><input type="${type}" value="${esc(v)}" ${attrs} onchange="setVal('${section}','${key}',${conv})"></div>`;
-}
-function sel(section, key, label, options) {
-  const v = state.settings[section]?.[key];
-  return `<div class="field"><label>${label}</label><select onchange="setVal('${section}','${key}',this.value)">${options.map(([val, t]) =>
-      `<option value="${val}" ${val === v ? "selected" : ""}>${t}</option>`).join("")}</select></div>`;
-}
-function renderSettings() {
-  const s = state.settings, models = s.wake.models || [];
-  const modelBox = ["hey_jarvis", "alexa", "hey_mycroft"].map((m) => `<label class="switch"><input type="checkbox" ${models.includes(m) ? "checked" : ""}
-      onchange="toggleModel('${m}', this.checked)"> «${m.replace("_", " ")}»</label>`).join("");
-  $("#settingsGrid").innerHTML = `
-    <div class="card"><h3>Приветствие</h3>${sw("assistant", "greet_on_start", "Приветствовать при включении")}
-      ${sw("assistant", "briefing_on_start", "Делать полный отчёт при включении (дела, почта, сообщения, YouTube)")}
-      ${sw("assistant", "greeting_weather", "Говорить погоду в приветствии")}
-      
-      ${inp("assistant", "honorific_ru", "Обращение (рус.)")}</div>
-    <div class="card"><h3>Пробуждение</h3>${modelBox}
-      ${inp("wake", "threshold", "Чувствительность к английским фразам (0.3 — легко, 0.7 — строго)", "number", 'step="0.05" min="0.1" max="0.95"')}
-      ${inp("wake", "name_similarity", "Насколько похоже должно звучать имя (0.6 — свободно, 0.8 — строго)", "number", 'step="0.05" min="0.5" max="0.95"')}
-      ${sw("wake", "name_detection", "Реагировать на имя в обычной речи")}
-      <div class="field"><label>Имена (через запятую)</label><input type="text" value="${esc((s.wake.names || []).join(", "))}"
-        onchange="setVal('wake','names',this.value.split(',').map(x=>x.trim().toLowerCase()).filter(Boolean))"></div>
-      <p class="hint">Изменение английских фраз применяется после перезапуска Джарвиса.</p></div>
-    <div class="card"><h3>Контроль дел</h3>
-      ${inp("tasks", "remind_before_min", "Предупреждать за (минут до срока)", "number", 'min="0"')}
-      ${inp("tasks", "overdue_repeat_hours", "Повторять о просроченном каждые (часов)", "number", 'min="0" step="0.5"')}
-      ${inp("tasks", "nudge_hours", "Сводка открытых дел каждые (часов, 0 — выкл.)", "number", 'min="0" step="0.5"')}
-      <div class="row">${inp("tasks", "quiet_from", "Тихие часы: с (час)", "number", 'min="0" max="23"')}
-      ${inp("tasks", "quiet_to", "до (час)", "number", 'min="0" max="23"')}</div>
-      <p class="hint">В тихие часы нет сводок и повторов. Напоминания о деле в назначенное вами время звучат всегда.</p></div>
-    <div class="card"><h3>Голос</h3>
-      ${sel("voice", "tts_engine_ru", "Голос для русского", [["piper", "Живой офлайн-голос Piper (рекомендуется)"], ["edge", "Нейроголос Microsoft (интернет, бывают сбои)"], ["windows", "Windows Irina (робот)"]])}
-      ${sel("voice", "piper_voice_ru", "Голос Piper", [["dmitri", "Дмитрий"], ["denis", "Денис"], ["ruslan", "Руслан"], ["irina", "Ирина"]])}
-      <button class="btn ghost" onclick="api('/api/command','POST',{text:'привет',speak:true})">🔊 Послушать</button>
-      ${sel("voice", "edge_voice_ru", "Нейроголос Microsoft (рус.)", [["ru-RU-DmitryNeural", "Дмитрий"], ["ru-RU-SvetlanaNeural", "Светлана"]])}
-      ${inp("voice", "tts_rate", "Скорость речи (−5 медленнее … 5 быстрее)", "number", 'min="-5" max="5"')}
-      ${sw("voice", "speak_text_replies", "Озвучивать ответы на написанные команды")}</div>
-    <div class="card"><h3>Производительность и игры</h3>
-      ${sw("performance", "game_mode", "Игровой режим: в играх освобождать видеокарту и не болтать")}
-      ${sw("performance", "fullscreen_is_game", "Считать игрой любое полноэкранное приложение (кроме браузера и плееров)")}
-      ${sw("performance", "game_mode_cpu_speech", "В играх распознавать речь на процессоре (видеокарта полностью для игры)")}
-      ${sw("performance", "names_in_games", "В играх слушать «Джарвис, …» (иначе только «Hey Jarvis»)")}
-      <p class="hint">${state.game?.on ? "🎮 Сейчас игровой режим: " + esc(state.game.name) : "Игровой режим сейчас выключен."}</p></div>
-    <div class="card"><h3>Прочее</h3>${inp("weather", "city", "Город для погоды")}
-      <div class="field"><label>Почта</label><div>${s.email.configured ? "✅ " + esc(s.email.address) : "❌ не подключена — config.toml, раздел [email]"}</div></div>
-      <div class="field"><label>Telegram</label><div>${s.telegram.configured ? "✅ подключён" : "❌ не подключён — «Подключить Telegram.bat»"}</div></div></div>`;
-}
-window.toggleModel = (m, on) => {
-  let models = state.settings.wake.models || [];
-  models = on ? [...new Set([...models, m])] : models.filter((x) => x !== m);
-  state.settings.wake.models = models; setVal("wake", "models", models);
-};
-
-// ---- connections ----
-let conn = null, tgStep = "phone";
-const ok = (b) => b ? `<span class="chip" style="background:#065f46;color:#a7f3d0">подключено</span>` : `<span class="chip overdue">не подключено</span>`;
-async function cAct(action, body, msg) {
-  toast("Подождите…");
-  const r = await api(`/api/connections/${action}`, "POST", body || {});
-  toast(r.message || (r.ok ? (msg || "Готово") : "Ошибка"));
-  await loadConn();
-  return r;
-}
-window.cAct = cAct;
-async function loadConn() { conn = await api("/api/connections"); renderConn(); }
-function renderConn() {
-  if (!conn) return;
-  const c = conn, v = (id) => document.getElementById(id)?.value?.trim() || "";
-  const emails = c.email.map((a) => `<div class="item"><div class="grow"><b>${esc(a.name)}</b> <span class="muted">${esc(a.address)}</span></div>
-      ${ok(a.has_password)}<button class="icon" onclick="cAct('email_delete',{address:'${esc(a.address)}'})">✕</button></div>`).join("");
-  const wa = c.whatsapp;
-  const waBody = !wa.enabled ? `<button class="btn" onclick="cAct('whatsapp',{enabled:true})">Включить WhatsApp</button>`
-    : wa.state === "connected" ? `<div class="row">${ok(true)} <span class="muted">${esc(wa.me?.name || "")}</span>
-        <button class="btn ghost" onclick="cAct('test',{source:'whatsapp'})">Проверить</button>
-        <button class="btn ghost" onclick="cAct('whatsapp_logout')">Выйти</button>
-        <button class="btn ghost" onclick="cAct('whatsapp',{enabled:false})">Выключить</button></div>`
-    : wa.state === "qr" && wa.qr ? `<p class="hint">Телефон → WhatsApp → ⋮ → Связанные устройства → Привязка устройства → наведите камеру:</p>
-        <img src="${wa.qr}" style="background:#fff;padding:8px;border-radius:8px;width:240px">`
-    : `<div class="muted">Запуск… (${esc(wa.state || "")})</div>`;
-  const tg = c.telegram;
-  const tgBody = tg.connected ? `<div class="row">${ok(true)}<button class="btn ghost" onclick="cAct('test',{source:'telegram'})">Проверить</button>
-        <button class="btn ghost" onclick="cAct('telegram_logout')">Выйти</button></div>`
-    : !tg.has_hash ? `<p class="hint">1) Откройте <b>my.telegram.org</b> → войдите → «API development tools» → создайте приложение (любое название). 2) Скопируйте сюда api_id и api_hash.</p>
-        <div class="row"><input id="tgId" type="text" placeholder="api_id" style="max-width:140px"><input id="tgHash" type="text" placeholder="api_hash">
-        <button class="btn" onclick="cAct('telegram_creds',{api_id:v('tgId'),api_hash:v('tgHash')})">Сохранить</button></div>`
-    : tgStep === "phone" ? `<p class="hint">Введите номер телефона Telegram — придёт код в приложение Telegram.</p>
-        <div class="row"><input id="tgPhone" type="text" placeholder="+998 90 123 45 67"><button class="btn" onclick="tgCode()">Получить код</button></div>`
-    : tgStep === "code" ? `<div class="row"><input id="tgCode" type="text" placeholder="Код из Telegram"><button class="btn" onclick="tgSign()">Войти</button></div>`
-    : `<p class="hint">Включена двухэтапная защита — введите облачный пароль Telegram.</p>
-        <div class="row"><input id="tgPwd" type="password" placeholder="Облачный пароль"><button class="btn" onclick="tgPwd()">Войти</button></div>`;
-  const ai = c.ai;
-  $("#connGrid").innerHTML = `
-    <div class="card"><h3>✉️ Почта</h3><div class="list">${emails || '<div class="muted">Нет ящиков</div>'}</div>
-      <div class="field" style="margin-top:10px"><label>Добавить ящик (Gmail, Yandex, Mail.ru, Outlook…)</label>
-      <div class="row"><input id="emName" type="text" placeholder="Название (Работа, Личная…)" style="max-width:170px">
-      <input id="emAddr" type="text" placeholder="адрес@gmail.com"></div>
-      <div class="row" style="margin-top:6px"><input id="emPwd" type="password" placeholder="Пароль приложения"><button class="btn" onclick="cAct('email_add',{name:v('emName'),address:v('emAddr'),password:v('emPwd')})">Подключить</button></div></div>
-      <p class="hint">Gmail: включите двухэтапную проверку → <b>myaccount.google.com/apppasswords</b> → создайте пароль приложения (16 букв) и вставьте сюда. Yandex/Mail.ru: «Пароли приложений» в настройках безопасности.</p></div>
-    <div class="card"><h3>✈️ Telegram ${ok(tg.connected)}</h3>${tgBody}</div>
-    <div class="card"><h3>💬 WhatsApp ${ok(wa.state === "connected")}</h3>${waBody}
-      <p class="hint">⚠️ WhatsApp не даёт официального доступа к личным чатам. Джарвис подключается как «связанное устройство» (как WhatsApp Web) через неофициальную библиотеку — WhatsApp теоретически может ограничить такой аккаунт. Отправка — только после вашего «да».</p></div>
-    <div class="card"><h3>▶️ YouTube ${ok(c.youtube.channels.length > 0)}</h3>
-      <div class="field"><label>Мои каналы (@handle или ID UC…, через запятую)</label>
-      <input id="ytCh" type="text" value="${esc(c.youtube.channels.join(", "))}" placeholder="@mychannel, @second"></div>
-      <div class="field"><label>API-ключ YouTube Data v3 ${c.youtube.has_key ? "✅ сохранён" : ""}</label>
-      <input id="ytKey" type="password" placeholder="${c.youtube.has_key ? "оставьте пустым, чтобы не менять" : "AIza…"}"></div>
-      <div class="row"><button class="btn" onclick="cAct('youtube',{channels:v('ytCh').split(','),api_key:v('ytKey')})">Сохранить</button>
-      <button class="btn ghost" onclick="cAct('test',{source:'youtube'})">Проверить</button></div>
-      <p class="hint">Ключ: <b>console.cloud.google.com</b> → создайте проект → «APIs & Services» → включите «YouTube Data API v3» → «Credentials» → «Create credentials» → «API key». Бесплатно.</p></div>
-    <div class="card"><h3>📅 Календарь ${ok(c.calendar.count > 0)}</h3>
-      <div class="row"><input id="calUrl" type="password" placeholder="Секретная ссылка iCal (https://calendar.google.com/…/basic.ics)">
-      <button class="btn" onclick="cAct('calendar_add',{url:v('calUrl')})">Добавить</button></div>
-      <div class="row" style="margin-top:6px"><span class="muted">Подключено календарей: ${c.calendar.count}</span>
-      ${c.calendar.count ? `<button class="btn ghost" onclick="cAct('test',{source:'calendar'})">Проверить</button><button class="btn ghost" onclick="cAct('calendar_clear')">Удалить все</button>` : ""}</div>
-      <p class="hint">Google Календарь → ⚙️ Настройки → выберите календарь → «Интеграция календаря» → «Секретный адрес в формате iCal».</p></div>
-    <div class="card"><h3>🧠 Мозг (ИИ)</h3>
-      <div class="field"><label>Какая модель отвечает на вопросы и даёт советы</label>
-      <select id="aiProv"><option value="local" ${ai.provider === "local" ? "selected" : ""}>Локальная (бесплатно, офлайн, простая)</option>
-      <option value="claude" ${ai.provider === "claude" ? "selected" : ""}>Claude (умная, нужен интернет и API-ключ, платно)</option></select></div>
-      <div class="field"><label>Модель Claude</label><select id="aiModel">${[["claude-opus-5-5", "Claude Opus 5.5 — самая умная"], ["claude-sonnet-5-5", "Claude Sonnet 5.5 — быстрее и дешевле"], ["claude-haiku-5-5", "Claude Haiku 5.5 — очень быстрая и дешёвая"]]
-        .map(([id, t]) => `<option value="${id}" ${ai.model === id ? "selected" : ""}>${t}</option>`).join("")}</select></div>
-      <div class="field"><label>API-ключ Anthropic ${ai.has_key ? "✅ сохранён" : ""}</label><input id="aiKey" type="password" placeholder="${ai.has_key ? "оставьте пустым, чтобы не менять" : "sk-ant-…"}"></div>
-      <button class="btn" onclick="cAct('ai',{provider:v('aiProv'),model:v('aiModel'),api_key:v('aiKey')})">Сохранить</button>
-      <p class="hint">Ключ: <b>console.anthropic.com</b> → API Keys. Оплата по использованию; для коротких голосовых ответов это обычно копейки в день.</p></div>`;
-  window.v = v;
-}
-window.tgCode = async () => { const r = await cAct("telegram_code", { phone: v("tgPhone") }); if (r.ok) { tgStep = r.step === "already" ? "phone" : "code"; renderConn(); } };
-window.tgSign = async () => { const r = await cAct("telegram_signin", { code: v("tgCode") }); tgStep = r.step === "password_needed" ? "password" : "phone"; renderConn(); };
-window.tgPwd = async () => { await cAct("telegram_signin", { password: v("tgPwd") }); tgStep = "phone"; renderConn(); };
+// ================= settings drawer =================
+async function loadProfiles() { prof = await api("/api/profiles"); renderSettings(); }
+async function loadConn() { conn = await api("/api/connections"); renderSettings(); }
+window.pAct = async (action, body) => { prof = await api(`/api/profiles/${action}`, "POST", body); renderSettings(); };
+window.setVal = (section, key, value) => api("/api/settings", "POST", { section, key, value }).then(() => toast("Сохранено"));
+const sw = (checked, onchange, title, hint) => `<label class="sw"><input type="checkbox" ${checked ? "checked" : ""} onchange="${onchange}"><span class="t"></span><span>${esc(title)}${hint ? `<small>${esc(hint)}</small>` : ""}</span></label>`;
+const keyState = (on) => on ? `<span class="pill ok">сохранён</span>` : `<span class="pill">нет</span>`;
 const v = (id) => document.getElementById(id)?.value?.trim() || "";
-setInterval(() => { if (document.querySelector("#connections.active") && conn?.whatsapp?.enabled && conn.whatsapp.state !== "connected") loadConn(); }, 4000);
-$("#briefBtn").onclick = () => api("/api/command", "POST", { text: "отчёт", speak: true });
-
-// ---- data ----
-async function load() {
-  state = await api("/api/state");
-  setStatus(state.status);
-  $("#messages").innerHTML = ""; state.history.forEach(addMsg);
-  renderTasks(); renderReminders(); renderShortcuts(); renderSkills(); renderDictations(); renderRecordings(); renderNotes(); renderMode();
-  if (!document.querySelector("#settings.active")) renderSettings();
+window.v = v;
+window.saveKey = async (name, id) => { const r = await api("/api/keys", "POST", { name, value: v(id) }); toast(r.message); document.getElementById(id).value = ""; };
+window.delKey = async (name) => { if (confirm("Удалить ключ?")) { const r = await api("/api/keys", "POST", { name, value: "" }); toast(r.message); } };
+window.cAct = async (action, body) => { const r = await api(`/api/connections/${action}`, "POST", body || {}); if (r.message) toast(r.message); if (r.step) tgStep = r.step.startsWith("ok") ? "phone" : r.step; loadConn(); };
+let tgStep = "phone";
+const openSecs = new Set(store.get("openSecs", ["secKeys"]));
+function sec(id, title, body) { return `<details id="${id}" ${openSecs.has(id) ? "open" : ""} ontoggle="secToggle(this)"><summary>${title}</summary><div class="sec">${body}</div></details>`; }
+window.secToggle = (d) => { d.open ? openSecs.add(d.id) : openSecs.delete(d.id); store.set("openSecs", [...openSecs]); };
+window.uploadBg = async (input) => {
+  const f = input.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append("file", f);
+  toast("Загружаю фон…");
+  const r = await fetch("/api/bg", { method: "POST", body: fd });
+  toast(r.ok ? "Фон установлен" : "Не получилось: " + (await r.text()));
+};
+function renderSettings() {
+  if (!V || !$("#settings").classList.contains("open")) return;
+  const k = V.keys, rb = V.remote, ui = V.ui;
+  const keys = `<div class="note">Облако освобождает видеокарту: речь и мозг — Groq, зрение — Gemini. Оба ключа бесплатные. Ключи хранятся в диспетчере учётных данных Windows и не показываются обратно.</div>
+    <div><label class="lbl">Groq — речь и мозг · <a href="https://console.groq.com/keys" target="_blank">console.groq.com/keys</a> ${keyState(k.groq)}</label>
+      <div class="keyrow"><input id="kGroq" type="password" placeholder="gsk_…" autocomplete="off"><button class="btn" onclick="saveKey('groq','kGroq')">Сохранить</button></div></div>
+    <div><label class="lbl">Gemini — зрение и запасной мозг · <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> ${keyState(k.gemini)}</label>
+      <div class="keyrow"><input id="kGem" type="password" placeholder="AIza…" autocomplete="off"><button class="btn" onclick="saveKey('gemini','kGem')">Сохранить</button></div></div>
+    <div><label class="lbl">Claude (по желанию) · <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a> ${keyState(k.anthropic)}</label>
+      <div class="keyrow"><input id="kAnt" type="password" placeholder="sk-ant-…" autocomplete="off"><button class="btn" onclick="saveKey('anthropic','kAnt')">Сохранить</button></div></div>
+    ${sw(V.cloud.local_fallback, "setVal('cloud','local_fallback',this.checked)", "Без интернета — локальные модели", "Whisper и Ollama загрузятся в видеопамять только при обрыве связи")}
+    ${(k.groq || k.gemini) ? `<button class="btn danger" onclick="delKey(prompt('Какой ключ удалить: groq, gemini или anthropic?')||'')">Удалить ключ…</button>` : ""}`;
+  const persona = `<div class="row">${PERSONAS.map(([id, t]) => `<button class="btn ${V.persona === id ? "" : "ghost"}" onclick="setPersona('${id}')">${t}</button>`).join("")}</div>
+    <div><label class="lbl">Свой характер — кто такой Джарвис и как отвечает</label>
+      <textarea id="customP" rows="4" placeholder="Например: ты строгий тренер по английскому, отвечаешь коротко и исправляешь мои ошибки">${esc(V.custom_persona)}</textarea>
+      <button class="btn ghost" style="margin-top:6px" onclick="api('/api/persona','POST',{custom_persona:v('customP'),persona:'custom'}).then(()=>toast('Сохранено'))">Сохранить и включить</button></div>
+    <div><label class="lbl">Фраза при запуске</label><input id="greet" value="${esc(V.greeting_text)}" onchange="setVal('assistant','greeting_text',this.value)"></div>
+    ${sw(V.startup_report, "setVal('assistant','startup_report',this.checked)", "Полный отчёт при включении", "Дела, почта, сообщения. Выключено — только приветствие")}`;
+  const look = `<div class="swatches">${Object.entries(ACCENTS).map(([id, rgb]) => `<button class="${ui.accent === id ? "on" : ""}" style="background:rgb(${rgb});color:rgb(${rgb})" title="${ACCENT_NAMES[id]}" aria-label="${ACCENT_NAMES[id]}" onclick="setVal('ui','accent','${id}')"></button>`).join("")}</div>
+    <div><label class="lbl">Прозрачность стекла</label><input type="range" min="0.25" max="0.95" step="0.05" value="${ui.glass}" onchange="setVal('ui','glass',+this.value)" style="padding:0"></div>
+    <div><label class="lbl">Фон: видео (.mp4, .webm) или картинка ${ui.bg ? "— установлен" : ""}</label>
+      <input type="file" accept="video/mp4,video/webm,image/*" onchange="uploadBg(this)" style="padding:6px"></div>
+    ${ui.bg ? `<div><label class="lbl">Затемнение фона</label><input type="range" min="0" max="0.9" step="0.05" value="${ui.dim}" onchange="setVal('ui','dim',+this.value)" style="padding:0"></div>
+      <button class="btn danger" onclick="api('/api/bg','DELETE')">Убрать фон</button>` : ""}`;
+  const voice = `<div><label class="lbl">Голосовой пак (короткие фразы персонажа при выполнении команд)</label>
+      <select onchange="api('/api/pack','POST',{name:this.value})"><option value="">Без пака — голос Piper</option>${V.packs.map((p) => `<option ${V.pack === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select>
+      <div class="note">Свои паки: папка voices\\packs\\&lt;имя&gt;\\ok, start, error с файлами .wav.</div></div>
+    <div style="font-size:14px">${V.voice_enrolled ? "✅ Джарвис знает ваш голос." : "Джарвис отвечает любому голосу."}</div>
+    <div class="row"><button class="btn ghost" onclick="api('/api/voice/enroll','POST');closeAll()">${V.voice_enrolled ? "Запомнить заново" : "🎙 Запомнить мой голос"}</button>
+      ${V.voice_enrolled ? `<button class="btn danger" onclick="if(confirm('Забыть ваш голос?'))api('/api/voice/forget','POST')">Забыть</button>` : ""}</div>
+    ${sw(store.get("speak", false), "store.set('speak',this.checked)", "Отвечать голосом на набранный текст", "")}`;
+  const bot = `<div class="note">Управление ноутбуком с телефона. 1) Telegram → <b>@BotFather</b> → /newbot → скопируйте токен. 2) Вставьте сюда. 3) Напишите своему боту любое сообщение и нажмите «Это я». Бот слушается только вас.</div>
+    <div><label class="lbl">Токен бота ${keyState(k.telegram_bot)} ${rb.running ? `<span class="pill ok">@${esc(rb.username)} работает</span>` : rb.error ? `<span class="pill bad">${esc(rb.error)}</span>` : ""}</label>
+      <div class="keyrow"><input id="kBot" type="password" placeholder="123456:ABC…" autocomplete="off"><button class="btn" onclick="saveKey('telegram_bot','kBot')">Сохранить</button></div></div>
+    ${rb.owner_id ? `<div style="font-size:14px">Хозяин: ID ${rb.owner_id} <button class="btn ghost" onclick="api('/api/remote','POST',{owner_id:0})">Отвязать</button></div>`
+      : rb.pending ? `<div class="row"><span style="font-size:14px">Написал: ${esc(rb.pending.name)} ${rb.pending.username ? "@" + esc(rb.pending.username) : ""} (ID ${rb.pending.id})</span><button class="btn" onclick="api('/api/remote','POST',{owner_id:${rb.pending.id}})">Это я</button></div>`
+      : k.telegram_bot ? `<div class="note">Напишите своему боту в Telegram — здесь появится кнопка «Это я».</div>` : ""}
+    ${sw(rb.enabled, "api('/api/remote','POST',{enabled:this.checked})", "Бот включён", "/screen, /status, /run, /close_game, /shutdown или любая команда текстом")}`;
+  let modes = `<div class="muted">Загрузка…</div>`;
+  if (prof) {
+    const id = prof.effective, p = prof.profiles[id];
+    modes = `<div class="row"><select onchange="pAct('activate',{id:this.value})">${Object.entries(prof.profiles).map(([pid, pp]) => `<option value="${pid}" ${pid === id ? "selected" : ""}>${pp.icon || ""} ${esc(pp.title)}</option>`).join("")}</select></div>
+      <div class="note">Функции режима «${esc(p.title)}»:</div>
+      ${Object.entries(prof.features).map(([fk, f]) => sw(p.features[fk], `pAct('update',{id:'${id}',feature:'${fk}',value:this.checked})`, f.title, f.hint)).join("")}
+      ${sw(prof.auto_game, "pAct('auto_game',{value:this.checked})", "Игровой режим сам при запуске игры", "")}`;
+  }
+  let conns = `<div class="muted">Загрузка…</div>`;
+  if (conn) {
+    const c = conn, tg = c.telegram, wa = c.whatsapp;
+    const tgBody = tg.connected ? `<div class="row"><span class="pill ok">подключён</span><button class="btn ghost" onclick="cAct('telegram_logout')">Выйти</button></div>`
+      : !tg.has_hash ? `<div class="note">Чтение ваших чатов: my.telegram.org → API development tools → api_id и api_hash.</div><div class="row"><input id="tgId" placeholder="api_id" style="max-width:110px"><input id="tgHash" placeholder="api_hash"><button class="btn" onclick="cAct('telegram_creds',{api_id:v('tgId'),api_hash:v('tgHash')})">OK</button></div>`
+      : tgStep === "code" ? `<div class="row"><input id="tgCode" placeholder="Код из Telegram"><button class="btn" onclick="cAct('telegram_signin',{code:v('tgCode')})">Войти</button></div>`
+      : tgStep === "password" ? `<div class="row"><input id="tgPwd" type="password" placeholder="Облачный пароль"><button class="btn" onclick="cAct('telegram_signin',{password:v('tgPwd')})">Войти</button></div>`
+      : `<div class="row"><input id="tgPhone" placeholder="+998 90 123 45 67"><button class="btn" onclick="cAct('telegram_code',{phone:v('tgPhone')})">Код</button></div>`;
+    const waBody = !wa.enabled ? `<button class="btn ghost" onclick="cAct('whatsapp',{enabled:true})">Включить</button>`
+      : wa.state === "connected" ? `<div class="row"><span class="pill ok">подключён</span><button class="btn ghost" onclick="cAct('whatsapp_logout')">Выйти</button><button class="btn ghost" onclick="cAct('whatsapp',{enabled:false})">Выключить</button></div>`
+      : wa.state === "qr" && wa.qr ? `<div class="note">Телефон → WhatsApp → Связанные устройства → Привязать:</div><img src="${wa.qr}" alt="QR-код WhatsApp" style="background:#fff;padding:8px;border-radius:8px;width:220px">`
+      : `<div class="muted">Запуск… ${esc(wa.state || "")}</div>`;
+    conns = `<div><label class="lbl">✉️ Почта</label>${c.email.map((a) => `<div class="li"><span>${esc(a.name)} · ${esc(a.address)}</span><button aria-label="Удалить ящик" onclick="cAct('email_delete',{address:'${esc(a.address)}'})">✕</button></div>`).join("")}
+        <div class="row"><input id="emAddr" placeholder="адрес@gmail.com"><input id="emPwd" type="password" placeholder="пароль приложения"></div>
+        <button class="btn ghost" style="margin-top:6px" onclick="cAct('email_add',{name:v('emAddr'),address:v('emAddr'),password:v('emPwd')})">Подключить ящик</button>
+        <div class="note">Gmail: myaccount.google.com/apppasswords — пароль приложения из 16 букв.</div></div>
+      <div><label class="lbl">✈️ Telegram (ваш аккаунт — чтение чатов)</label>${tgBody}</div>
+      <div><label class="lbl">💬 WhatsApp</label>${waBody}</div>
+      <div><label class="lbl">▶️ YouTube ${c.youtube.has_key ? "· ключ сохранён" : ""}</label><div class="row"><input id="ytCh" value="${esc(c.youtube.channels.join(", "))}" placeholder="@канал"><input id="ytKey" type="password" placeholder="API-ключ"></div>
+        <button class="btn ghost" style="margin-top:6px" onclick="cAct('youtube',{channels:v('ytCh').split(','),api_key:v('ytKey')})">Сохранить</button></div>
+      <div><label class="lbl">📅 Календарь iCal · подключено: ${c.calendar.count}</label><div class="row"><input id="calUrl" type="password" placeholder="секретная ссылка .ics"><button class="btn ghost" onclick="cAct('calendar_add',{url:v('calUrl')})">Добавить</button></div></div>`;
+  }
+  $("#setBody").innerHTML = sec("secKeys", "Ключи API", keys) + sec("secPersona", "Характер", persona) + sec("secLook", "Внешний вид", look) +
+    sec("secVoice", "Голос", voice) + sec("secBot", "Telegram-бот", bot) + sec("secModes", "Режимы и функции", modes) + sec("secConn", "Подключения", conns);
 }
-let refreshTimer = null;
-function refreshSoon() { clearTimeout(refreshTimer); refreshTimer = setTimeout(async () => {
-  const s = await api("/api/state"); state = { ...s, history: state.history };
-  renderTasks(); renderReminders(); renderShortcuts(); renderDictations(); renderSkills(); renderRecordings(); renderNotes(); renderMode();
-  if (!document.querySelector("#settings.active")) renderSettings(); }, 250); }
 
+// ================= keyboard =================
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeAll(); q.blur(); q.value = ""; renderSugg(); return; }
+  if (e.ctrlKey && e.key.toLowerCase() === "k") { e.preventDefault(); q.focus(); return; }
+  if (e.ctrlKey && e.key.toLowerCase() === "h") { e.preventDefault(); openDrawer("history"); return; }
+  if (e.ctrlKey && e.key === ",") { e.preventDefault(); openDrawer("settings"); return; }
+  const typing = document.activeElement && ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName);
+  if (!typing && !e.ctrlKey && !e.altKey && !e.metaKey && e.key.length === 1) q.focus();
+});
+
+// ================= data & live events =================
+async function loadV3() { V = await api("/api/v3"); applyLook(); renderHeader(); renderSettings(); }
+async function loadState() { state = await api("/api/state"); history = state.history || []; game = !!state.game?.on; setStatus(state.status); renderTasks(); }
+let refreshT;
+function refreshSoon() { clearTimeout(refreshT); refreshT = setTimeout(async () => { const h = history; await loadState(); history = h; }, 250); }
+const AUTO_CARD = { "tasks.json": "tasks", "notes.md": "notes", "reminders.json": "reminders" };
 function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
-    if (ev.type === "status") setStatus(ev.state);
-    else if (ev.type === "profiles") loadProfiles();
-    else if (ev.type === "heard") { $("#heard").textContent = (ev.ok ? "🎤 Услышал: " : "🎤 Не разобрал: ") + ev.text; }
-    else if (ev.type === "record") { recording = ev.state === "on"; $("#recInfo").textContent = recording ? "идёт запись" + (ev.seconds ? " · " + fmtDur(ev.seconds) : "") : (ev.name ? "сохранено: " + ev.name : ""); if (!recording) refreshSoon(); else renderRecordings(); }
-    else if (ev.type === "message") { state?.history.push(ev); addMsg(ev); }
-    else if (ev.type === "data" || ev.type === "settings") refreshSoon();
-    else if (ev.type === "game") { state.game = { on: ev.on, name: ev.name }; $("#statusText").title = ev.on ? "игровой режим" : ""; toast(ev.on ? "🎮 Игровой режим: " + ev.name : "Игровой режим выключен"); }
-    else if (ev.type === "connections" && !document.querySelector("#connections.active input:focus")) loadConn();
+    if (ev.type === "level") { lvTarget = Math.min(1, ev.v / 1400); if (ev.s !== status) setStatus(ev.s); }
+    else if (ev.type === "status") setStatus(ev.state);
+    else if (ev.type === "message") {
+      history.push(ev); if (history.length > 200) history.shift();
+      sub(ev.role, ev.text); if (ev.role === "user") lastAct = Date.now();
+      if ($("#history").classList.contains("open")) renderHistory();
+    }
+    else if (ev.type === "heard" && !ev.ok) { $("#you").textContent = "не разобрал: " + ev.text; $("#you").classList.remove("fade"); }
+    else if (ev.type === "data") { refreshSoon(); if (AUTO_CARD[ev.file] && Date.now() - lastAct < 15000) setTimeout(() => PANELS[AUTO_CARD[ev.file]](), 400); }
+    else if (ev.type === "settings" || ev.type === "v3" || ev.type === "macros" || ev.type === "focus" || ev.type === "translate_live" || ev.type === "remote") { loadV3(); if (ev.type === "settings") refreshSoon(); }
+    else if (ev.type === "profiles") { if ($("#settings").classList.contains("open")) loadProfiles(); }
+    else if (ev.type === "connections") { if ($("#settings").classList.contains("open")) loadConn(); }
+    else if (ev.type === "game") { game = ev.on; setStatus(); toast(ev.on ? "🎮 Игровой режим: " + ev.name : "Игровой режим выключен"); }
+    else if (ev.type === "cloud" && !ev.ok) { toast("Нет связи с облаком: " + (ev.error || "")); loadV3(); }
+    else if (ev.type === "vision") card("vision", "Смотрю на экран", `<img src="data:image/png;base64,${ev.thumb}" alt="" style="width:100%;border-radius:8px;border:1px solid var(--line);display:block"><div class="chip" style="margin-top:6px">${esc(ev.title)}</div>`, 20000);
+    else if (ev.type === "translation") card("translation", "Перевод · " + (ev.title || "окно"), `<div class="pre">${esc(ev.text)}</div>`, 0);
+    else if (ev.type === "enroll") {
+      if (ev.state === "on") card("enroll", "Запоминаю ваш голос", `<div style="font-size:15px;line-height:1.5">Привет, Джарвис. Сегодня я хочу спокойно закончить дела, а вечером немного поиграть. Напомни мне купить хлеб и позвонить маме. Какая завтра погода? (А теперь тише:) Джарвис, который час?</div>
+        <div style="height:5px;background:rgba(255,255,255,.08);border-radius:3px;margin-top:10px"><div style="height:100%;width:${Math.min(100, Math.round(100 * ev.seconds / ev.need))}%;background:rgb(var(--accent));border-radius:3px"></div></div><div class="chip" style="margin-top:4px">${ev.seconds} из ${ev.need} с речи</div>`, 0);
+      else card("enroll", ev.ok ? "Голос запомнен" : "Не получилось", ev.ok ? "<div>Теперь Джарвис слушается только вас.</div>" : "<div>Мало речи — попробуйте ещё раз.</div>", 9000);
+    }
+    else if (ev.type === "record") { if (ev.state === "on") card("rec", "● Запись", `<div>Идёт запись${ev.seconds ? " · " + ev.seconds + " с" : ""}. Скажите «стоп».</div>`, 0); else { card("rec", "Запись сохранена", `<div class="muted">${esc(ev.name || "")}</div>`, 8000); refreshSoon(); } }
   };
-  ws.onclose = () => { setStatus("starting"); setTimeout(() => { connect(); load(); }, 2000); };
+  ws.onclose = () => { setStatus("starting"); setTimeout(() => { connect(); loadState(); loadV3(); }, 2000); };
 }
-load().then(connect);
-loadProfiles();
-loadConn();
-setInterval(() => state && (renderTasks()), 60000);
+loadState().then(() => {
+  const last = history.filter((m) => m.role !== "user").slice(-1)[0];
+  if (last) { $("#him").textContent = last.text; $("#him").classList.add("fade"); }
+  connect();
+});
+loadV3();
+setInterval(renderTasks, 60000);
 </script>
 </body>
 </html>

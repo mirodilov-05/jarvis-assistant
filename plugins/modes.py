@@ -151,6 +151,8 @@ def personality(ctx: Ctx) -> str:
     pid = core.active_profile_id()
     data["profiles"][pid]["personality"] = kind
     core.save_profiles(data)
+    core.save_setting("assistant", "persona", kind)   # V3: the HUD character switch follows the voice
+    core.emit({"type": "v3"})
     return {"friend": "Окей, общаемся по-дружески!", "polite": "Хорошо, буду предельно вежлив, сэр.",
             "work": "Понял. Коротко и по делу."}[kind]
 
@@ -216,3 +218,26 @@ def scheduler() -> None:
         except Exception:  # noqa: BLE001
             core.log.exception("profile scheduler")
         time.sleep(30)
+
+
+PERSONA_WORDS = {"tactical": r"тактическ|джарвис", "coder": r"программист|кодер|разработчик", "business": r"бизнес|продуктивн|делов",
+                 "quiet": r"тих|молча|без голоса", "custom": r"сво[йе]"}
+
+
+@skill(
+    "modes.persona",
+    title={"ru": "Характер V3: тактический, программист, бизнес, тихий, свой"},
+    patterns={"ru": [r"(?:характер|персона|роль|режим характера)\s+(тактическ\w*|программист\w*|кодер|разработчик|бизнес\w*|"
+                     r"продуктивн\w*|тих\w*|сво\w*)",
+                     r"(?:стань|будь|включи)\s+(программист\w*|тактическ\w*|бизнес\w*)"]},
+    examples={"ru": ["Характер программист", "Характер тактический", "Характер тихий"]},
+    priority=2,
+)
+def persona(ctx: Ctx) -> str:
+    word = ctx.group(1)
+    kind = next((k for k, rx in PERSONA_WORDS.items() if re.search(rx, word)), "tactical")
+    core.save_setting("assistant", "persona", kind)
+    core.emit({"type": "v3"})
+    return {"tactical": "Тактический режим, сэр.", "coder": "Режим программиста. Слушаю.",
+            "business": "Бизнес-режим. Фокус на задачах.", "quiet": "Тихий режим, сэр. Отвечаю текстом.",
+            "custom": "Свой характер включён."}[kind]

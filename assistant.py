@@ -55,6 +55,7 @@ for noisy in ("httpx", "httpcore", "faster_whisper", "telethon", "comtypes", "ur
 log = logging.getLogger("jarvis")
 
 import core  # noqa: E402
+import cloud  # noqa: E402
 import voiceprint as vp  # noqa: E402
 from oww_compat import Model  # noqa: E402
 
@@ -119,6 +120,13 @@ def telemetry() -> dict:
     except Exception:  # noqa: BLE001
         out["llm"] = None   # Ollama not running
     out["memory_model"] = bool(sys.modules.get("memory") and sys.modules["memory"]._model)
+    out["cloud"] = cloud.status()
+    out["vram_gb"] = round(out["gpu"]["vram_used"] / 1024, 1) if out.get("gpu") else None
+    try:
+        import pcx
+        out["focus"] = pcx.focus_active()
+    except Exception:  # noqa: BLE001
+        out["focus"] = False
     return out
 
 
@@ -396,6 +404,14 @@ def transcribe(audio: np.ndarray, accurate: bool = True, lang_hint: str | None =
     """Return (text, lang, reliable). reliable=False means mumbling/noise/hallucination."""
     if voiced_seconds(audio) < 0.24:   # no actual speech: don't let Whisper invent words
         return "", lang_hint or langs()[0], False
+    if cloud.stt_enabled():
+        try:
+            return _transcribe_cloud(audio, accurate, lang_hint)
+        except Exception as e:  # noqa: BLE001 - offline / quota
+            log.warning("Cloud speech recognition failed: %s", e)
+            if not cloud.local_fallback():
+                _cloud_down_notice()
+                return "", lang_hint or langs()[0], False
     a = audio.astype(np.float32) / 32768.0
 
     def decode(lg: str):
@@ -436,6 +452,47 @@ def transcribe(audio: np.ndarray, accurate: bool = True, lang_hint: str | None =
     if accurate:   # show in the app what was heard
         core.emit({"type": "heard", "text": text, "ok": reliable})
     return text, lang, reliable
+
+
+def _reliable(text: str, lang: str, avg_logprob: float, no_speech: float, compression: float) -> bool:
+    return not (avg_logprob < -1.0 or (no_speech > 0.6 and avg_logprob < -0.6) or compression > 2.4
+                or _HALLUCINATIONS.search(text) or _REPEATS.search(text.replace(" ", ""))
+                or (text.strip(" .,!?").lower() in PROMPTS.get(lang, "").lower() and (no_speech > 0.3 or avg_logprob < -0.45)))
+
+
+def _transcribe_cloud(audio: np.ndarray, accurate: bool, lang_hint: str | None) -> tuple[str, str, bool]:
+    """Groq Whisper large-v3 turbo: ~0.3 s, nothing on the GPU."""
+    allowed = langs()
+    lang = lang_hint or (allowed[0] if len(allowed) == 1 else None)
+    res = cloud.transcribe(audio, lang, PROMPTS.get(lang or "ru") if accurate else None)
+    text, lang, segs = res["text"], res["lang"], res["segments"]
+    if lang not in core.LANGS:
+        lang = allowed[0]
+    if not text:
+        return "", lang, False
+    if segs:
+        avg_logprob = sum(float(s.get("avg_logprob", 0)) for s in segs) / len(segs)
+        no_speech = max(float(s.get("no_speech_prob", 0)) for s in segs)
+        compression = max(float(s.get("compression_ratio", 1)) for s in segs)
+    else:
+        avg_logprob, no_speech, compression = -0.3, 0.0, 1.0
+    reliable = _reliable(text, lang, avg_logprob, no_speech, compression)
+    log.info("STT cloud %dms [%s] %.2f/%.2f/%.1f %s: %s", cloud.STATS["stt_ms"], lang, avg_logprob, no_speech,
+             compression, "ok" if reliable else "REJECTED", text[:200])
+    if accurate:
+        core.emit({"type": "heard", "text": text, "ok": reliable})
+    return text, lang, reliable
+
+
+_cloud_notice = {"t": 0.0}
+
+
+def _cloud_down_notice() -> None:
+    """Say once in a while that the cloud can't be reached (no internet, bad key, free limit)."""
+    if time.time() - _cloud_notice["t"] > 120:
+        _cloud_notice["t"] = time.time()
+        core.emit({"type": "cloud", "ok": False, "error": cloud.STATS.get("error", "")})
+        speaker.say("Нет связи с облаком, сэр. Проверьте интернет или ключ Groq.", "ru")
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +612,7 @@ def game_watcher() -> None:
                 GAME.update(on=playing, name=os.path.basename(path) if playing else "")
                 log.info("Game mode %s %s", "ON" if playing else "OFF", GAME["name"])
                 core.CONFIG["_game_mode"] = playing
+                core.CONFIG["_game_exe"] = GAME["name"] if playing else ""
                 if core.profiles().get("auto_game", True):
                     core.set_override("game", "game" if playing else None)
                 core.emit({"type": "game", "on": playing, "name": GAME["name"]})
@@ -565,10 +623,12 @@ def game_watcher() -> None:
                                       json={"model": llm.get("model", "qwen3.5:2b-q4_K_M"), "keep_alive": 0}, timeout=10)
                     except Exception:  # noqa: BLE001
                         pass
-                    threading.Thread(target=lambda: (whisper("main"), len(langs()) > 1 and whisper("lid")), daemon=True).start()
+                    if _models:
+                        threading.Thread(target=lambda: (whisper("main"), len(langs()) > 1 and whisper("lid")), daemon=True).start()
                 else:
                     def _restore():
-                        whisper("main"), len(langs()) > 1 and whisper("lid")
+                        if _models:
+                            whisper("main"), len(langs()) > 1 and whisper("lid")
                         llm = sys.modules.get("jarvis_plugin_llm")
                         if llm:
                             llm.warm_up()   # load the language model back so the next answer is fast
@@ -582,6 +642,10 @@ def game_watcher() -> None:
 # Microphone, wake phrases, names, voice recorder
 # ---------------------------------------------------------------------------
 
+# a voice pack replaces only acknowledgements, never answers that carry information («Сейчас 21:08»)
+_ACK = re.compile(r"^(открываю|запускаю|включаю|выключаю|закрываю|ставлю|готово|сделано|хорошо|принято|есть|выполн|"
+                  r"записал|запомнил|добавил|удалил|отметил|перенёс|перенес|ищу|громче|тише|пауза|звук|"
+                  r"напомню|таймер|будильник|понял|окей|ок(?=\W|$))", re.I)
 _HUSH = r"(стоп|хватит|замолчи|молчи|тихо|тише|достаточно|понял|поняла|ладно|спасибо|ок|окей|все|ясно|джарвис)"
 _DICTATE_START = re.compile(r"(начни|включи|начать) диктовку|diktovka\w* (boshla|yoq)")
 _DICTATE_STOP = re.compile(r"(закончи|останови|стоп|хватит)\s*(диктовку)?|diktovka\w* (tugat|toxtat)|tugat|toxtat")
@@ -592,6 +656,10 @@ WAKE_REPLIES = {
     "friend": ["Да?", "Слушаю!", "Что сделать?", "Говори.", "Я тут.", "Да, что такое?"],
     "work": ["Слушаю.", "Да.", "Готов."],
     "polite": ["Да, сэр?", "Слушаю Вас.", "Чем могу помочь, сэр?", "К Вашим услугам."],
+    "tactical": ["Да, сэр?", "Слушаю, сэр.", "На связи."],
+    "coder": ["Слушаю.", "Да?"],
+    "business": ["Слушаю.", "Да, по делу?"],
+    "quiet": [],
 }
 
 
@@ -737,6 +805,8 @@ class Listener:
                 # 2) "Джарвис, …" inside normal speech
                 if not core.feature("name_listening") or (GAME["on"] and not cfg("performance", "names_in_games", True)):
                     continue
+                if cloud.stt_enabled() and not cfg("cloud", "names_in_speech", False):
+                    continue   # cloud mode: wake by "Hey Jarvis" only, room talk is never sent anywhere
                 p = self.speech_prob(chunk)
                 if p >= self.SPEECH_ON:
                     if not utter:
@@ -909,9 +979,9 @@ class Listener:
         speaker.stop()
         set_status("recording")
         head = self._already_talking() if keep_audio else None
-        if head is None and core.feature("wake_reply"):
+        if head is None and core.feature("wake_reply") and core.mode() != "quiet":
             # answer out loud, like a person: "Да?", "Слушаю", "Что сделать?"
-            speaker.say(random.choice(WAKE_REPLIES[core.mode()]), "ru")
+            speaker.say(random.choice(WAKE_REPLIES.get(core.mode(), WAKE_REPLIES["polite"])), "ru")
             speaker.wait(5)
             self.flush()
         else:
@@ -1039,9 +1109,13 @@ class Listener:
         if len(pcm) < SAMPLE_RATE:
             return
         try:
-            a = pcm.astype(np.float32) / 32768.0
-            segments, info = whisper("main").transcribe(a, beam_size=5, vad_filter=True, condition_on_previous_text=True)
-            lines = [f"[{int(s.start // 60):02d}:{int(s.start % 60):02d}] {s.text.strip()}" for s in segments]
+            if cloud.stt_enabled():
+                pieces = cloud.transcribe_long(pcm, langs()[0] if len(langs()) == 1 else None)
+            else:
+                a = pcm.astype(np.float32) / 32768.0
+                segments, info = whisper("main").transcribe(a, beam_size=5, vad_filter=True, condition_on_previous_text=True)
+                pieces = [(s.start, s.text.strip()) for s in segments]
+            lines = [f"[{int(st // 60):02d}:{int(st % 60):02d}] {tx}" for st, tx in pieces]
             wav_path.with_suffix(".txt").write_text("\n".join(lines), encoding="utf-8")
             core.emit({"type": "data", "file": wav_path.name})
         except Exception:  # noqa: BLE001
@@ -1106,6 +1180,12 @@ def handle(text: str, lang: str, source: str, speak: bool, echo: bool = True) ->
         core.FOLLOWUP.clear()
     core.log_exchange(source, lang, text, reply)
     core.emit({"type": "message", "role": "jarvis", "text": reply, "lang": lang, "source": source})
+    if core.mode() == "quiet" and source != "голос-срочно":
+        speak = False     # «Тихий» character: answers only on screen
+    macros = _plugin("macros")
+    if (speak and reply and core.feature("voice_replies") and macros and macros.active_pack()
+            and len(reply) <= 60 and _ACK.match(reply) and macros.play("ok")):
+        return reply   # a character voice pack answered with its own short phrase
     if speak and reply and core.feature("voice_replies"):
         speaker.say(reply, lang)
     return reply
@@ -1291,15 +1371,184 @@ def run_server() -> None:
                     except Exception:  # noqa: BLE001
                         clients.discard(ws)
 
-    async def index(_r):   # the HUD; the full classic window with every tab stays at /classic
-        page = "index.html" if cfg("assistant", "ui", "hud") == "classic" else "hud.html"
-        return web.FileResponse(BASE / "web" / page)
+    async def index(_r):   # V3: one HUD screen, everything else lives in its drawers
+        return web.FileResponse(BASE / "web" / "index.html", headers={"Cache-Control": "no-store"})
 
-    async def classic(_r):
-        return web.FileResponse(BASE / "web" / "index.html")
+    async def to_index(_r):
+        raise web.HTTPFound("/")
 
-    async def hud(_r):
-        return web.FileResponse(BASE / "web" / "hud.html")
+    # ---- V3 ---------------------------------------------------------------
+    MEDIA = core.DATA / "media"
+    SECRET_NAMES = {"groq": "groq:api_key", "gemini": "gemini:api_key", "telegram_bot": "telegram_bot:token",
+                    "anthropic": "anthropic:api_key"}
+
+    def _live_on() -> bool:
+        try:
+            import pcx
+            return bool(pcx.LIVE["on"])
+        except Exception:  # noqa: BLE001
+            return False
+
+    def v3_state() -> dict:
+        import connections
+        import remote_bot
+        macros = _plugin("macros")
+        bg = next(iter(sorted(MEDIA.glob("bg.*"))), None) if MEDIA.exists() else None
+        try:
+            import pcx
+            focus = pcx.focus_active()
+        except Exception:  # noqa: BLE001
+            focus = False
+        return {
+            "persona": core.setting("assistant", "persona", "tactical"),
+            "custom_persona": core.setting("assistant", "custom_persona", ""),
+            "greeting_text": core.setting("assistant", "greeting_text", "Привет, сэр. Что будем делать?"),
+            "startup_report": bool(core.setting("assistant", "startup_report", False)),
+            "keys": {k: bool(connections.get_secret(v)) for k, v in SECRET_NAMES.items()},
+            "cloud": cloud.status(),
+            "remote": remote_bot.status(),
+            "ui": {"accent": core.setting("ui", "accent", "cyan"), "glass": core.setting("ui", "glass", 0.72),
+                   "dim": core.setting("ui", "dim", 0.55),
+                   "bg": ({"url": f"/media/{bg.name}?v={int(bg.stat().st_mtime)}",
+                           "kind": "video" if bg.suffix.lower() in (".mp4", ".webm") else "image"} if bg else None)},
+            "packs": macros.packs() if macros else [], "pack": macros.active_pack() if macros else "",
+            "focus": focus, "translate_live": _live_on(),
+            "voice_enrolled": vp.enrolled(),
+        }
+
+    async def v3_get(_r):
+        return web.json_response(await asyncio.to_thread(v3_state))
+
+    async def persona_set(r):
+        body = await r.json()
+        if body.get("persona") in ("tactical", "coder", "business", "quiet", "custom", "friend", "work", "polite"):
+            core.save_setting("assistant", "persona", body["persona"])
+        if "custom_persona" in body:
+            core.save_setting("assistant", "custom_persona", str(body["custom_persona"])[:1500])
+        core.emit({"type": "v3"})
+        return web.json_response({"ok": True, "persona": core.setting("assistant", "persona", "tactical")})
+
+    async def keys_set(r):
+        """Save an API key into Windows Credential Manager (never returned back to the page)."""
+        import connections
+        body = await r.json()
+        name = SECRET_NAMES.get(body.get("name", ""))
+        if not name:
+            raise web.HTTPBadRequest(text="unknown key")
+        value = str(body.get("value", "")).strip()
+        await asyncio.to_thread(connections.set_secret, name, value)
+        msg = "Ключ удалён." if not value else "Ключ сохранён."
+        ok = True
+        if value and body["name"] in ("groq", "gemini"):
+            try:
+                await asyncio.to_thread(cloud.test, body["name"])
+                msg = "Ключ работает."
+            except Exception as e:  # noqa: BLE001
+                ok, msg = False, f"Ключ сохранён, но проверка не прошла: {str(e)[:160]}"
+        if body["name"] == "telegram_bot":
+            import remote_bot
+            await asyncio.to_thread(remote_bot.restart)
+        core.emit({"type": "v3"})
+        return web.json_response({"ok": ok, "message": msg})
+
+    async def bg_upload(r):
+        reader = await r.multipart()
+        part = await reader.next()
+        ext = os.path.splitext(part.filename or "")[1].lower()
+        if ext not in (".mp4", ".webm", ".jpg", ".jpeg", ".png", ".webp", ".gif"):
+            raise web.HTTPBadRequest(text="Нужен файл .mp4, .webm, .jpg, .png или .webp")
+        MEDIA.mkdir(parents=True, exist_ok=True)
+        for old in MEDIA.glob("bg.*"):
+            old.unlink(missing_ok=True)
+        size, path = 0, MEDIA / f"bg{ext}"
+        with open(path, "wb") as f:
+            while chunk := await part.read_chunk(1 << 20):
+                size += len(chunk)
+                if size > 300 * 2**20:
+                    f.close()
+                    path.unlink(missing_ok=True)
+                    raise web.HTTPRequestEntityTooLarge(max_size=300 * 2**20, actual_size=size)
+                f.write(chunk)
+        core.emit({"type": "v3"})
+        return web.json_response({"ok": True})
+
+    async def bg_delete(_r):
+        for old in MEDIA.glob("bg.*") if MEDIA.exists() else []:
+            old.unlink(missing_ok=True)
+        core.emit({"type": "v3"})
+        return web.json_response({"ok": True})
+
+    async def media_file(r):
+        path = MEDIA / os.path.basename(r.match_info["name"])
+        if not path.exists():
+            raise web.HTTPNotFound()
+        return web.FileResponse(path)
+
+    async def macros_get(_r):
+        m = _plugin("macros")
+        return web.json_response({"items": m.load(), "types": m.ACTION_TYPES, "packs": m.packs(), "pack": m.active_pack()})
+
+    async def macros_save(r):
+        item = await asyncio.to_thread(_plugin("macros").upsert, await r.json())
+        return web.json_response(item)
+
+    async def macros_delete(r):
+        await asyncio.to_thread(_plugin("macros").delete, r.match_info["id"])
+        return web.json_response({"ok": True})
+
+    async def macros_run(r):
+        m = _plugin("macros")
+        item = next((x for x in m.load() if x["id"] == r.match_info["id"]), None)
+        if not item:
+            raise web.HTTPNotFound()
+        reply = await asyncio.to_thread(m.run, item)
+        core.emit({"type": "message", "role": "jarvis", "text": reply, "lang": "ru", "source": "макрос"})
+        return web.json_response({"reply": reply})
+
+    async def pack_set(r):
+        body = await r.json()
+        core.save_setting("voice", "pack", body.get("name", ""))
+        core.emit({"type": "v3"})
+        return web.json_response({"ok": True})
+
+    async def translate(_r):
+        import pcx
+        try:
+            reply = await asyncio.to_thread(pcx.translate_screen)
+        except Exception as e:  # noqa: BLE001
+            reply = f"Не получилось перевести: {str(e)[:160]}"
+        return web.json_response({"reply": reply})
+
+    async def translate_live(r):
+        import pcx
+        body = await r.json()
+        reply = pcx.translate_live(bool(body.get("on")))
+        core.emit({"type": "v3"})
+        return web.json_response({"on": pcx.LIVE["on"], "reply": reply})
+
+    async def remote_get(_r):
+        import remote_bot
+        return web.json_response(remote_bot.status())
+
+    async def remote_set(r):
+        import remote_bot
+        body = await r.json()
+        if "owner_id" in body:
+            core.save_setting("remote", "owner_id", int(body["owner_id"] or 0))
+        if "enabled" in body:
+            core.save_setting("remote", "enabled", bool(body["enabled"]))
+        await asyncio.to_thread(remote_bot.restart if core.setting("remote", "enabled", True) else remote_bot.stop)
+        core.emit({"type": "v3"})
+        return web.json_response(remote_bot.status())
+
+    async def capsule(_r):
+        import tray
+        tray.toggle_capsule()
+        return web.json_response({"ok": True})
+
+    async def window_hide(_r):
+        import tray
+        return web.json_response({"ok": await asyncio.to_thread(tray.hide_window)})
 
     async def telemetry_get(_r):
         return web.json_response(await asyncio.to_thread(telemetry))
@@ -1509,7 +1758,14 @@ def run_server() -> None:
 
     app = web.Application()
     app.add_routes([
-        web.get("/", index), web.get("/classic", classic), web.get("/hud", hud), web.get("/api/telemetry", telemetry_get),
+        web.get("/", index), web.get("/classic", to_index), web.get("/hud", to_index), web.get("/api/telemetry", telemetry_get),
+        web.get("/api/v3", v3_get), web.post("/api/persona", persona_set), web.post("/api/keys", keys_set),
+        web.post("/api/bg", bg_upload), web.delete("/api/bg", bg_delete), web.get("/media/{name}", media_file),
+        web.get("/api/macros", macros_get), web.post("/api/macros", macros_save),
+        web.delete("/api/macros/{id}", macros_delete), web.post("/api/macros/{id}/run", macros_run),
+        web.post("/api/pack", pack_set), web.post("/api/translate", translate), web.post("/api/translate/live", translate_live),
+        web.get("/api/remote", remote_get), web.post("/api/remote", remote_set),
+        web.post("/api/capsule", capsule), web.post("/api/window/hide", window_hide),
         web.get("/api/state", state), web.post("/api/command", command),
         web.post("/api/listen", listen), web.post("/api/stop", stop_speaking),
         web.post("/api/voice/{action}", voice_action),
@@ -1563,9 +1819,12 @@ def main() -> None:
             core.CONFIG["_game_mode"] = True
     except Exception:  # noqa: BLE001
         pass
-    whisper("main")  # load the speech models before listening
-    if len(langs()) > 1:
-        whisper("lid")
+    if not cloud.stt_enabled() or cloud.local_fallback():
+        whisper("main")  # local speech models only when the cloud is off (or as a fallback)
+        if len(langs()) > 1:
+            whisper("lid")
+    else:
+        log.info("Cloud mode: speech recognition on Groq, nothing loaded on the GPU")
     LISTENER = Listener()
     threading.Thread(target=LISTENER.run, daemon=True, name="listener").start()
     threading.Thread(target=game_watcher, daemon=True, name="game-watcher").start()

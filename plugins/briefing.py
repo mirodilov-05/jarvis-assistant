@@ -129,6 +129,13 @@ def brief_on_start() -> None:
     if core.CONFIG.get("_game_mode"):
         return  # you're playing: don't talk over the game
     lang = a.get("greeting_lang", "ru")
+    if not core.setting("assistant", "startup_report", False):
+        # V3: one short phrase at start, no morning/evening report (ask «отчёт» when you want it)
+        macros = _mod("macros")
+        if macros and macros.play("start"):
+            return
+        core.speak(core.setting("assistant", "greeting_text", "Привет, сэр. Что будем делать?"), lang)
+        return
     if core.feature("briefing") and a.get("briefing_on_start", True):
         core.speak(build(lang, greet=True), lang)
     else:

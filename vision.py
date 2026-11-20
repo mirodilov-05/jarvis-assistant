@@ -2,8 +2,7 @@
 
 Capture: the active window (or the whole screen when the Jarvis window itself is in front) via Windows GDI with
 ctypes — no Pillow (its unsigned DLLs could be blocked by Smart App Control). Encoded as PNG with zlib.
-Nothing is written to disk. The picture goes to the local qwen3.5 (it has vision) or, if you switched the brain to
-Claude, to Anthropic.
+Nothing is written to disk. The picture goes to Google Gemini (V3 cloud mode), or to the local qwen3.5 / Claude.
 """
 
 from __future__ import annotations
@@ -116,6 +115,16 @@ def look(question: str) -> str:
     q = question.strip() or "Что на экране?"
     log.info("Vision: %r on «%s» %dx%d -> %dx%d", q, title, img.shape[1], img.shape[0], small.shape[1], small.shape[0])
     try:
+        import cloud
+        if cloud.setting("enabled", True) and cloud.has("gemini"):
+            try:
+                return (llm._clean(cloud.look(system, q, data)) if llm else cloud.look(system, q, data)) or "Не разобрал, что на экране."
+            except Exception:  # noqa: BLE001
+                log.exception("Gemini vision failed")
+                if not cloud.local_fallback():
+                    return "Не получилось связаться с Gemini. Проверьте интернет или ключ."
+        elif cloud.enabled() and not cloud.local_fallback():
+            return "Для зрения нужен бесплатный ключ Gemini, сэр. Добавьте его в настройках."
         if llm and llm.provider() == "claude":
             try:
                 reply = llm._ask_claude(system, [{"role": "user", "content": [

@@ -11,7 +11,13 @@ user_name = ""                # "Меня зовут ..." sets it
 smart_router = true           # let the AI understand free wording ("закинь в список молоко" -> add task)
 conversation_turns = 4        # in friend mode: how many replies you can give without saying "Джарвис" again
 greet_on_start = true
-briefing_on_start = true      # full voice report at logon (tasks, calendar, mail, messages, YouTube, advice)
+startup_report = false        # V3: at start say only greeting_text; true = the full voice report below
+greeting_text = "Привет, сэр. Что будем делать?"
+briefing_on_start = true      # full voice report at logon (used only when startup_report = true)
+# Character (V3): "tactical" (сэр, 1–2 sentences), "coder", "business", "custom" (custom_persona text),
+# or "" to use the mode's own personality (friend / work / polite). Switch in the HUD header.
+persona = "tactical"
+custom_persona = ""
 greeting_lang = "ru"          # language of the greeting and periodic nudges: "ru" or "uz"
 greeting_weather = true
 honorific_ru = "сэр"
@@ -78,7 +84,23 @@ speak_text_replies = false
 # Opens the text box for typing commands.
 text_box = "ctrl+alt+j"
 
+[cloud]
+# V3 "Zero-VRAM": speech recognition and the brain run on free cloud APIs, the GPU stays free.
+# Keys are entered in the app (Settings drawer) and stored in Windows Credential Manager, never in this file.
+#   Groq   — https://console.groq.com/keys        (speech + brain)
+#   Gemini — https://aistudio.google.com/apikey   (screen vision + backup brain)
+enabled = true
+stt = true                          # speech recognition on Groq (false = local Whisper on the GPU)
+stt_model = "whisper-large-v3-turbo"
+llm_model = "qwen/qwen3.8-27b"     # Groq model with tool calling (llama-3.3-70b is no longer on Groq)
+llm_backup_model = "openai/gpt-oss-120b"
+gemini_model = "gemini-2.5-flash"
+vision_model = "gemini-2.5-flash"
+local_fallback = false              # true = when offline use local Whisper + Ollama (loads them into VRAM)
+names_in_speech = false             # true = also catch "Джарвис" inside normal speech (sends every phrase to Groq)
+
 [llm]
+# Local fallback only (see [cloud] local_fallback).
 # "ollama" = ask Ollama directly (fast, ~0.5 s). "openjarvis" = go through the OpenJarvis server (slower, ~8 s).
 backend = "ollama"
 max_tokens = 160

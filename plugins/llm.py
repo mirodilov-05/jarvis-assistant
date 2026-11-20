@@ -1,7 +1,8 @@
 """The assistant's "brain" for free-form questions and advice.
 
-Providers (Connections → AI):
-  local  — Ollama on this laptop (qwen3.5:2b): free, offline, fast, but simple.
+Providers:
+  cloud  — Groq / Gemini free APIs (cloud.py): smart, fast, 0 GB of video memory. Default in V3.
+  local  — Ollama on this laptop (qwen3.5:2b): free, offline, fast, but simple (only with [cloud] local_fallback).
   claude — Anthropic Claude via your API key: much smarter, needs internet, paid per use.
 The model always gets your current context (tasks, latest briefing) so it can
 answer "what should I do first?".
@@ -39,16 +40,40 @@ PERSONA = {
                "aniq va tushunarli javob ber, 1–3 gap."),
     },
 }
+# V3 characters (switch in the HUD header or by voice "режим тактический / программист / бизнес")
+PERSONA.update({
+    "tactical": {"ru": ("Ты Джарвис — тактический ИИ-ассистент. Обращайся к пользователю «сэр». Отвечай строго по делу: "
+                        "одно, максимум два коротких предложения. Без объяснений, вступлений, шуток и встречных вопросов."),
+                 "uz": "Sen Jarvis — taktik AI yordamchisan. «Janob» deb murojaat qil. Faqat ish bo'yicha, bir-ikki qisqa gap."},
+    "coder": {"ru": ("Ты Джарвис — ИИ-напарник программиста: код, терминал, Git, архитектура. Отвечай точно и коротко, "
+                     "до трёх предложений: называй конкретные команды, файлы и причины ошибок. Код вслух не диктуй — "
+                     "скажи суть и что сделать."),
+              "uz": "Sen Jarvis — dasturchining AI hamkori. Aniq va qisqa, aniq buyruqlarni ayt."},
+    "quiet": {"ru": ("Ты Джарвис. Сейчас тихий режим: отвечай одним коротким предложением, обращайся «сэр»."),
+              "uz": "Sen Jarvis. Jim rejim: bitta qisqa gap."},
+    "business": {"ru": ("Ты Джарвис — ассистент по продуктивности с жёстким тайм-менеджментом. Говори по-деловому и "
+                        "коротко, держи фокус на задачах и сроках, в конце называй следующий конкретный шаг."),
+                 "uz": "Sen Jarvis — samaradorlik yordamchisi. Qisqa, vazifa va muddatlarga e'tibor."},
+})
+
+
+def _custom_persona() -> dict:
+    text = core.setting("assistant", "custom_persona", "") or "Ты Джарвис — ИИ-ассистент."
+    return {"ru": text, "uz": text}
+
+
 RULES = {
     "ru": " Отвечай ТОЛЬКО по-русски, без списков, разметки и эмодзи — ответ зачитывается голосом. Не выдумывай факты: если не знаешь, так и скажи.",
     "uz": " FAQAT o'zbek tilida (lotin yozuvida), ro'yxat, belgi va emojisiz — javob ovoz bilan o'qiladi. Bilmasang, ochiq ayt.",
 }
-LIMITS = {"work": (90, 2), "friend": (180, 3), "polite": (160, 3)}   # (max tokens, max spoken sentences)
+LIMITS = {"work": (90, 2), "friend": (180, 3), "polite": (160, 3), "tactical": (80, 2), "coder": (220, 3),
+          "business": (120, 2), "custom": (180, 3), "quiet": (60, 1)}   # (max tokens, max spoken sentences)
 
 
 def system_prompt(lang: str) -> str:
     m = core.mode()
-    p = PERSONA[m].get(lang, PERSONA[m]["ru"]) + RULES.get(lang, RULES["ru"])
+    persona = _custom_persona() if m == "custom" else PERSONA.get(m, PERSONA["friend"])
+    p = persona.get(lang, persona["ru"]) + RULES.get(lang, RULES["ru"])
     name = core.CONFIG.get("assistant", {}).get("user_name", "")
     if name and m != "work":
         p += f" Пользователя зовут {name}." if lang == "ru" else f" Foydalanuvchining ismi {name}."
@@ -105,6 +130,9 @@ def _short(reply: str, max_sentences: int = 3) -> str:
 
 
 def provider() -> str:
+    import cloud
+    if cloud.enabled():
+        return "cloud"
     ai = connections.load()["ai"]
     if ai.get("provider") == "claude" and connections.get_secret("anthropic:api_key"):
         return "claude"
@@ -152,12 +180,21 @@ def ask(text: str, lang: str, max_tokens: int = 300, use_history: bool = True, e
         with_context: bool | None = None) -> str:
     # small local models get confused by a big context: give it only when the question is about your stuff
     if with_context is None:
-        with_context = provider() == "claude" or bool(_NEEDS_CONTEXT.search(text))
+        with_context = provider() in ("claude", "cloud") or bool(_NEEDS_CONTEXT.search(text))
     ctx_part = ("\n\nКонтекст пользователя:\n" + context_text()) if with_context else f"\n\nСейчас {core.now():%d.%m.%Y %H:%M}."
     system = system_prompt(lang) + ctx_part + extra_system
     messages = (_history[-8:] if use_history else []) + [{"role": "user", "content": text}]
     try:
-        if provider() == "claude":
+        if provider() == "cloud":
+            import cloud
+            try:
+                reply = cloud.ask(system, messages, max_tokens)
+            except Exception:  # noqa: BLE001
+                core.log.exception("Cloud request failed")
+                if not cloud.local_fallback():
+                    return "Нет связи с облачным мозгом. Проверьте интернет или ключи в настройках."
+                reply = _ask_local(system, messages, max_tokens)
+        elif provider() == "claude":
             try:
                 reply = _ask_claude(system, messages, max_tokens)
             except Exception:  # noqa: BLE001 - offline / quota: fall back to the local model
@@ -177,8 +214,8 @@ def ask(text: str, lang: str, max_tokens: int = 300, use_history: bool = True, e
 @core.on_start
 def warm_up() -> None:
     cfg = core.CONFIG.get("llm", {})
-    if core.CONFIG.get("_game_mode"):
-        return
+    if core.CONFIG.get("_game_mode") or provider() != "local":
+        return   # cloud brain: nothing to load into video memory
     try:
         requests.post(cfg.get("ollama_url", "http://127.0.0.1:11434") + "/api/generate",
                       json={"model": cfg.get("model", "qwen3.5:2b-q4_K_M"), "prompt": "", "keep_alive": "30m"}, timeout=120)
@@ -201,11 +238,17 @@ def advice(ctx: Ctx) -> str:
                ctx.lang, max_tokens=400)
 
 
+class _Done(Exception):
+    pass
+
+
 _QUESTION = re.compile(r"^(что|как|почему|зачем|кто|где|когда|какой|какая|какие|сколько|расскажи|объясни|ты |а ты|"
                        r"nima|qanday|nega|kim|qayer|qachon|qancha|nechta|sen )", re.I)
 
 
 def model_loaded() -> bool:
+    if provider() != "local":
+        return True
     cfg = core.CONFIG.get("llm", {})
     try:
         r = requests.get(cfg.get("ollama_url", "http://127.0.0.1:11434") + "/api/ps", timeout=2).json()
@@ -232,6 +275,10 @@ def understand(text: str, lang: str) -> str | None:
               "команды, сохранив все детали (что, кому, когда, название). Если это просто разговор, вопрос или мнение — "
               "ответь одним словом CHAT. Ответь только командой или CHAT, без пояснений.")
     try:
+        if provider() == "cloud":
+            import cloud
+            out = _clean(cloud.ask("", [{"role": "user", "content": prompt}], max_tokens=60)).strip(" .«»\"'")
+            raise _Done(out)
         cfg = core.CONFIG.get("llm", {})
         r = requests.post(cfg.get("ollama_url", "http://127.0.0.1:11434") + "/api/generate", json={
             "model": cfg.get("model", "qwen3.5:2b-q4_K_M"), "prompt": prompt, "stream": False, "think": False,
@@ -239,6 +286,8 @@ def understand(text: str, lang: str) -> str | None:
             "options": {"num_predict": 40, "temperature": 0},
         }, timeout=20)
         out = _clean(r.json().get("response", "")).strip(" .«»\"'")
+    except _Done as d:
+        out = d.args[0]
     except Exception:  # noqa: BLE001
         return None
     if not out or "CHAT" in out.upper() or len(out) > 160 or out.lower() == text.lower():
@@ -263,7 +312,7 @@ def understand(text: str, lang: str) -> str | None:
 def chat(ctx: Ctx) -> str:
     if not core.feature("chat"):
         return f"Свободный разговор выключен в режиме «{core.active_profile()['title']}». Команды работают."
-    max_tokens, sentences = LIMITS[core.mode()]
+    max_tokens, sentences = LIMITS.get(core.mode(), (180, 3))
     if ctx.source == "голос" and provider() == "local" and not model_loaded():
         core.speak("Секунду…" if ctx.lang == "ru" else "Bir soniya…", ctx.lang)   # model is loading (e.g. after a game)
     if ctx.source != "голос":

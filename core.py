@@ -200,11 +200,20 @@ MODES = {
     "work": {"ru": "рабочий", "uz": "ish"},
     "friend": {"ru": "дружеский", "uz": "do'stona"},
     "polite": {"ru": "вежливый", "uz": "hurmatli"},
+    "tactical": {"ru": "тактический", "uz": "taktik"},
+    "coder": {"ru": "программист", "uz": "dasturchi"},
+    "business": {"ru": "бизнес", "uz": "biznes"},
+    "custom": {"ru": "свой", "uz": "o'zim"},
+    "quiet": {"ru": "тихий", "uz": "jim"},
 }
 
 
 def mode() -> str:
-    """Personality of the active profile: friend / work / polite."""
+    """Character: the V3 persona chosen in the HUD (tactical / coder / business / custom) wins;
+    otherwise the active profile's personality (friend / work / polite)."""
+    persona = setting("assistant", "persona", "")
+    if persona in MODES:
+        return persona
     m = active_profile().get("personality") or CONFIG.get("assistant", {}).get("mode", "friend")
     return m if m in MODES else "friend"
 
@@ -368,7 +377,7 @@ def address(lang: str) -> str:
     """How Jarvis addresses you in the current mode ("сэр", your name, or nothing)."""
     a = CONFIG.get("assistant", {})
     name = a.get("user_name", "")
-    if mode() == "work":
+    if mode() in ("work", "coder", "business"):
         return ""
     if mode() == "friend":
         return name or ("" if lang == "ru" else a.get("honorific_uz", "aka"))
@@ -667,8 +676,11 @@ _NO_SMART = {"system.shutdown", "tasks.clear", "tasks.delete", "notes.delete", "
              "apps.close", "reminders.cancel", "basics.reload", "recorder.start"}
 
 
+_POLITE = re.compile(r"(?:,\s*)?\b(?:пожалуйста|плиз|please|будь добр|будь другом)\b,?", re.I)
+
+
 def route(text: str, lang: str, source: str, config: dict) -> str:
-    text = text.strip()
+    text = re.sub(r"\s{2,}", " ", _POLITE.sub("", text)).strip(" ,")   # «открой, пожалуйста, телеграм» = «открой телеграм»
     if not text:
         return ""
     pending_reply = _handle_pending(text, lang)

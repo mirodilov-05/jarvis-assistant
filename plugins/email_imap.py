@@ -19,8 +19,29 @@ IMAP_HOSTS = {"gmail.com": "imap.gmail.com", "googlemail.com": "imap.gmail.com",
               "live.com": "outlook.office365.com", "icloud.com": "imap.mail.me.com", "yahoo.com": "imap.mail.yahoo.com"}
 
 
+MX_PROVIDERS = [("google.com", "imap.gmail.com"), ("googlemail.com", "imap.gmail.com"),
+                ("outlook.com", "outlook.office365.com"), ("yandex", "imap.yandex.ru"), ("mail.ru", "imap.mail.ru")]
+
+
+def _mx(domain: str) -> str:
+    """Mail servers of a domain (company / university addresses on Google Workspace, Microsoft 365…)."""
+    import subprocess
+    try:
+        return subprocess.run(["nslookup", "-type=mx", domain], capture_output=True, text=True, timeout=6,
+                              creationflags=subprocess.CREATE_NO_WINDOW).stdout.lower()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def guess_host(address: str) -> str:
-    return IMAP_HOSTS.get(address.split("@")[-1].lower(), "imap." + address.split("@")[-1].lower())
+    domain = address.split("@")[-1].lower()
+    if domain in IMAP_HOSTS:
+        return IMAP_HOSTS[domain]
+    mx = _mx(domain)
+    for marker, host in MX_PROVIDERS:
+        if marker in mx:
+            return host
+    return "imap." + domain
 
 
 def _decode(value: str) -> str:

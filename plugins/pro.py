@@ -260,20 +260,24 @@ def gemini_search(question: str) -> tuple[str, list[tuple[str, str]]] | None:
     import requests
     if not cloud.has("gemini"):
         return None
-    model = cloud.setting("gemini_model", "gemini-2.5-flash")
-    r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                      headers={"x-goog-api-key": cloud.key("gemini"), "Content-Type": "application/json"},
-                      json={"contents": [{"parts": [{"text": f"Сегодня {core.now():%d.%m.%Y}. Ответь по-русски одним-двумя "
-                                                             f"предложениями, только проверенные факты: {question}"}]}],
-                            "tools": [{"google_search": {}}]}, timeout=25)
-    if r.status_code != 200:
-        core.log.warning("gemini search %s: %s", r.status_code, r.text[:200])
-        return None
-    cand = (r.json().get("candidates") or [{}])[0]
-    text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", [])).strip()
-    chunks = (cand.get("groundingMetadata") or {}).get("groundingChunks") or []
-    links = [(c["web"].get("title", ""), c["web"].get("uri", "")) for c in chunks if c.get("web")][:4]
-    return (text, links) if text else None
+    for model in cloud.gemini_models():
+        r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                          headers={"x-goog-api-key": cloud.key("gemini"), "Content-Type": "application/json"},
+                          json={"contents": [{"parts": [{"text": f"Сегодня {core.now():%d.%m.%Y}. Ответь по-русски кратко, "
+                                                                 f"только проверенные факты: {question}"}]}],
+                                "tools": [{"google_search": {}}]}, timeout=30)
+        if r.status_code in (404, 429, 500, 503):        # gone / out of free quota / busy: try the next model
+            core.log.info("gemini search %s on %s, trying the next model", r.status_code, model)
+            continue
+        if r.status_code != 200:
+            core.log.warning("gemini search %s: %s", r.status_code, r.text[:200])
+            return None
+        cand = (r.json().get("candidates") or [{}])[0]
+        text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", [])).strip()
+        chunks = (cand.get("groundingMetadata") or {}).get("groundingChunks") or []
+        links = [(c["web"].get("title", ""), c["web"].get("uri", "")) for c in chunks if c.get("web")][:5]
+        return (text, links) if text else None
+    return None
 
 
 def wiki_snippets(query: str, n: int = 3) -> list[tuple[str, str, str]]:

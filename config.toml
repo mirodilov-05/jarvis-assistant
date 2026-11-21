@@ -94,8 +94,8 @@ stt = true                          # speech recognition on Groq (false = local 
 stt_model = "whisper-large-v3-turbo"
 llm_model = "openai/gpt-oss-120b"  # fastest smart Groq model with tools: ~0.45 s (qwen3.8-27b ~1.1 s)
 llm_backup_model = "qwen/qwen3.8-27b"
-gemini_model = "gemini-2.5-flash"
-vision_model = "gemini-2.5-flash"
+gemini_model = "gemini-flash-latest"   # always the current Gemini Flash
+vision_model = "gemini-flash-latest"
 local_fallback = false              # true = when offline use local Whisper + Ollama (loads them into VRAM)
 names_in_speech = true              # catch «Джарвис» / «Эй, Джарвис» inside normal speech
 local_spotting = true               # the name is checked by a small Whisper on the CPU — room talk is never sent anywhere

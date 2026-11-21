@@ -132,8 +132,16 @@ def _providers(vision: bool) -> list[tuple[str, str, str]]:
             if m not in _DEAD:          # Groq said this model doesn't exist: don't waste time on it again
                 out.append(("groq", GROQ, m))
     if has("gemini"):
-        out.append(("gemini", GEMINI, setting("vision_model" if vision else "gemini_model", "gemini-2.5-flash")))
+        for m in gemini_models(vision):
+            if m not in _DEAD:
+                out.append(("gemini", GEMINI, m))
     return out
+
+
+def gemini_models(vision: bool = False) -> list[str]:
+    """Gemini models to try in order: free models are often busy (503) or out of quota (429) — then the next one answers."""
+    first = setting("vision_model" if vision else "gemini_model", "gemini-flash-latest")
+    return list(dict.fromkeys([first, "gemini-flash-lite-latest", "gemini-3.8-flash", "gemini-3.5-flash"]))
 
 
 def _body(model: str, messages: list[dict], tools: list[dict] | None, max_tokens: int, temperature: float) -> dict:
@@ -146,8 +154,8 @@ def _body(model: str, messages: list[dict], tools: list[dict] | None, max_tokens
         body["reasoning_effort"] = "none"
     elif "gpt-oss" in model:
         body["reasoning_effort"] = "low"
-    elif model.startswith("gemini-2.5-flash"):
-        body["reasoning_effort"] = "none"
+    elif model.startswith("gemini"):
+        body["reasoning_effort"] = "low"      # quick answers; a model that refuses the option is asked again without it
     return body
 
 

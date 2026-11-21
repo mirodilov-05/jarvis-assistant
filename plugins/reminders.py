@@ -181,6 +181,12 @@ def scheduler() -> None:
                     msg = f"{prefix}: {r['text']}"
                 core.speak(msg, r["lang"], urgent=True)
                 core.log_exchange("напоминание", r["lang"], "-", msg)
+                if core.setting("remote", "notify_reminders", True):
+                    try:
+                        import remote_bot
+                        remote_bot.notify("⏰ " + msg)
+                    except Exception:  # noqa: BLE001
+                        pass
         except Exception:  # noqa: BLE001
             core.log.exception("Reminder scheduler error")
         time.sleep(5)

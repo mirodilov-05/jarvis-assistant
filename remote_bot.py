@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import ctypes
 import json
+import re
+import sys
 import logging
 import subprocess
 import threading
@@ -128,15 +130,35 @@ def status_text() -> str:
     return "\n".join(lines)
 
 
-HELP = ("Я Джарвис на вашем ноутбуке. Команды:\n/screen — скриншот\n/status — состояние ПК\n/run программа — запустить\n"
+HELP = ("Я Джарвис на вашем ноутбуке. Пишите или говорите голосовым — отвечу голосом.\n"
+        "Например: «найди, какие рилсы про нейросети залетели за ночь», «пиши сценарий под меня», «напомни в 8 вечера снять видео».\n\n"
+        "Команды:\n/screen — скриншот\n/status — состояние ПК\n/run программа — запустить\n"
         "/close_game — закрыть игру\n/shutdown — выключить ПК\n/cancel — отменить выключение\n"
         "Или просто напишите, как Джарвису: «добавь дело …», «громче», «какая погода».")
 
 
-def handle_text(chat: int, text: str) -> None:
+def answer(chat: int, text: str, voice: bool = False) -> None:
+    """Reply in text; to a voice message also with Jarvis's voice (Telegram voice note)."""
+    send(chat, text or "Готово.")
+    if voice and text and core.setting("remote", "voice_replies", True):
+        try:
+            ogg = voice_note(text)
+            if ogg:
+                call("sendVoice", http_timeout=60, files={"voice": ("jarvis.ogg", ogg, "audio/ogg")}, chat_id=chat)
+        except Exception as e:  # noqa: BLE001
+            log.warning("voice reply failed: %s", e)
+
+
+_WAKE_PC = re.compile(r"^(?:джарвис,?\s*)?(?:включи|разбуди|запусти)(?: мой| мне)? (?:комп\w*|пк|ноут\w*)$", re.I)
+
+
+def handle_text(chat: int, text: str, voice: bool = False) -> None:
     low = text.strip().lower()
     cmd = low.split()[0] if low else ""
-    if cmd in ("/start", "/help", "помощь"):
+    if _WAKE_PC.match(low.strip(" .!")):
+        _wake_screen()
+        answer(chat, "Включил. На связи, что делаем?", voice)
+    elif cmd in ("/start", "/help", "помощь"):
         send(chat, HELP)
     elif cmd in ("/screen", "скриншот", "/screenshot", "экран"):
         png = _screen_png()
@@ -159,10 +181,89 @@ def handle_text(chat: int, text: str) -> None:
         subprocess.run(["shutdown", "/a"], creationflags=subprocess.CREATE_NO_WINDOW)
         send(chat, "Выключение отменено.")
     else:
+        core.emit({"type": "message", "role": "user", "text": "📱 " + text, "lang": "ru", "source": "телеграм"})
         reply = core.route(text, "ru", "телеграм", core.CONFIG)
         reply = core.styled(reply, "ru") if hasattr(core, "styled") else reply
-        send(chat, reply or "Готово.")
+        answer(chat, reply or "Готово.", voice)
+        core.emit({"type": "message", "role": "jarvis", "text": reply or "Готово.", "lang": "ru", "source": "телеграм"})
+        return
     core.emit({"type": "message", "role": "user", "text": "📱 " + text, "lang": "ru", "source": "телеграм"})
+
+
+def _wake_screen() -> None:
+    """The laptop is on (the bot runs on it): wake the display if it went dark."""
+    import ctypes
+    u32 = ctypes.windll.user32
+    u32.mouse_event(0x0001, 1, 0, 0, 0)          # tiny mouse move
+    u32.mouse_event(0x0001, -1 & 0xFFFFFFFF, 0, 0, 0)
+    ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000002 | 0x00000001)
+
+
+# ---------------------------------------------------------------------------
+# Voice messages: in (Groq / local Whisper) and out (Piper -> OGG Opus voice note)
+# ---------------------------------------------------------------------------
+
+def _download(file_id: str) -> bytes:
+    info = call("getFile", http_timeout=20, file_id=file_id)
+    r = _http.get(f"https://api.telegram.org/file/bot{token()}/{info['file_path']}", timeout=60)
+    r.raise_for_status()
+    return r.content
+
+
+def _decode_16k(data: bytes):
+    import io
+
+    import av
+    import numpy as np
+    c = av.open(io.BytesIO(data))
+    res = av.audio.resampler.AudioResampler(format="s16", layout="mono", rate=16000)
+    pcm = [r.to_ndarray().reshape(-1) for fr in c.decode(audio=0) for r in res.resample(fr)]
+    c.close()
+    return np.concatenate(pcm).astype(np.int16) if pcm else np.zeros(0, dtype=np.int16)
+
+
+def transcribe_voice(data: bytes) -> str:
+    pcm = _decode_16k(data)
+    if len(pcm) < 16000 * 0.3:
+        return ""
+    main = sys.modules.get("__main__")
+    if main and hasattr(main, "transcribe"):
+        text, _lang, _ok = main.transcribe(pcm, accurate=True, lang_hint="ru")
+        return text
+    import cloud
+    return cloud.transcribe(pcm, "ru")["text"]
+
+
+def voice_note(text: str) -> bytes:
+    """Jarvis's Piper voice as an OGG/Opus voice note."""
+    import io
+
+    import av
+    import numpy as np
+    main = sys.modules.get("__main__")
+    spk = getattr(main, "speaker", None)
+    voice = spk._piper_voice(core.setting("voice", "piper_voice_ru", "dmitri")) if spk else None
+    if voice is None:
+        return b""
+    chunks = list(voice.synthesize(re.sub(r"[*#_`>]", "", text)[:900]))
+    if not chunks:
+        return b""
+    pcm = np.concatenate([c.audio_int16_array for c in chunks])
+    rate = chunks[0].sample_rate
+    buf = io.BytesIO()
+    out = av.open(buf, "w", format="ogg")
+    st = out.add_stream("libopus", rate=48000)
+    st.layout = "mono"
+    res = av.audio.resampler.AudioResampler(format="s16", layout="mono", rate=48000)
+    frame = av.AudioFrame.from_ndarray(pcm.reshape(1, -1), format="s16", layout="mono")
+    frame.sample_rate = rate
+    for f in res.resample(frame):
+        for pkt in st.encode(f):
+            out.mux(pkt)
+    for pkt in st.encode(None):
+        out.mux(pkt)
+    out.close()
+    return buf.getvalue()
 
 
 def handle_button(chat: int, data: str) -> str:
@@ -238,6 +339,16 @@ def _dispatch(u: dict) -> None:
         log.warning("Telegram bot: ignored a message from id %s (@%s)", sender["id"], sender.get("username", ""))
         return
     text = msg.get("text") or ""
+    media = msg.get("voice") or msg.get("audio") or msg.get("video_note")
+    if media and not text:
+        call("sendChatAction", chat_id=chat["id"], action="typing")
+        text = transcribe_voice(_download(media["file_id"]))
+        if not text:
+            send(chat["id"], "Не расслышал, повторите, пожалуйста.")
+            return
+        send(chat["id"], f"🎙 {text}")
+        handle_text(chat["id"], text, voice=True)
+        return
     if text:
         handle_text(chat["id"], text)
 
@@ -262,6 +373,20 @@ def restart() -> None:
 
 def stop() -> None:
     _stop.set()
+
+
+def notify(text: str) -> tuple[bool, str]:
+    """Send a message to the owner (reminders, «скинь мне в телегу»). -> (sent, reason if not)."""
+    if not token():
+        return False, "Telegram-бот не подключён: вставьте токен в ⚙ → Telegram-бот."
+    if not owner_id():
+        return False, "Бот не привязан: напишите ему в Telegram и нажмите «Это я» в ⚙ → Telegram-бот."
+    try:
+        for i in range(0, len(text), 3900):
+            call("sendMessage", chat_id=owner_id(), text=text[i:i + 3900])
+        return True, ""
+    except Exception as e:  # noqa: BLE001
+        return False, f"Telegram не ответил: {str(e)[:120]}"
 
 
 def status() -> dict:

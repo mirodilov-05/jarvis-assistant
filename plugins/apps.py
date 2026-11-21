@@ -211,6 +211,12 @@ def open_target(ctx: Ctx, target: str) -> str:
         if re.match(r"^[\w.-]+\.(ru|com|org|net|io|uz|ai|tv)$", t):
             os.startfile("https://" + t)
             return ctx.t(f"Открываю сайт {t}.", f"{t} sayti ochilmoqda.")
+    finder = sys.modules.get("jarvis_plugin_appfinder")
+    for t in candidates:   # learned Russian names and sound-alike first: exact and quick
+        hit = finder.find(t, use_brain=False) if finder else None
+        if hit:
+            os.startfile(hit[1])
+            return ctx.t(f"Запускаю {hit[0]}.", f"{hit[0]} ishga tushirilmoqda.")
     for t in candidates:
         found = find_app(t)
         if found:
@@ -222,6 +228,12 @@ def open_target(ctx: Ctx, target: str) -> str:
         if game:
             os.startfile(game["launch"])
             return ctx.t(f"Запускаю игру {game['name']}.", f"{game['name']} o'yini ishga tushirilmoqda.")
+    finder = sys.modules.get("jarvis_plugin_appfinder")
+    for t in candidates:
+        hit = finder.find(t) if finder else None
+        if hit:
+            os.startfile(hit[1])
+            return ctx.t(f"Запускаю {hit[0]}.", f"{hit[0]} ishga tushirilmoqda.")
     for t in candidates:
         if t in WEB_FALLBACK:
             os.startfile(WEB_FALLBACK[t])
@@ -310,6 +322,9 @@ def close_app(ctx: Ctx):
     if not exe or exe not in procs:
         key = name.translate(_TRANSLIT).replace(" ", "")
         exe = next((p for p in procs if p.startswith(key)), None)
+    if not exe:
+        finder = sys.modules.get("jarvis_plugin_appfinder")
+        exe = finder.find_running(name) if finder else None
     if not exe:
         return ctx.t(f"Не нашёл запущенную программу «{name}».", f"«{name}» ishlab turgan dastur topilmadi.")
     subprocess.run(["taskkill", "/IM", exe], capture_output=True, creationflags=NO_WINDOW)

@@ -28,9 +28,28 @@ def _client():
     return TelegramClient(SESSION, int(api_id), api_hash)
 
 
+_auth: dict = {"ok": None, "t": 0.0}
+
+
 def connected() -> bool:
     api_id, api_hash = connections.telegram_creds()
-    return bool(api_id and api_hash and Path(SESSION + ".session").exists() and _login.get("ok", True))
+    if not (api_id and api_hash and Path(SESSION + ".session").exists() and _login.get("ok", True)):
+        return False
+    import time
+    if _auth["ok"] is None or time.time() - _auth["t"] > 600:      # does Telegram still accept this login?
+        try:
+            client = _client()
+            client.connect()
+            try:
+                _auth["ok"] = bool(client.is_user_authorized())
+            finally:
+                client.disconnect()
+        except Exception:  # noqa: BLE001 - offline: assume it still works
+            _auth["ok"] = True if _auth["ok"] is None else _auth["ok"]
+        _auth["t"] = time.time()
+        if not _auth["ok"]:
+            core.log.warning("Telegram account session is no longer authorised — log in again in ⚙ → Подключения")
+    return bool(_auth["ok"])
 
 
 # ---- login flow used by the app ------------------------------------------
@@ -62,6 +81,7 @@ def login_sign_in(code: str = "", password: str = "") -> str:
             except SessionPasswordNeededError:
                 return "password_needed"
         me = client.get_me()
+        _auth.update(ok=True, t=0.0)
         _login.clear()
         return f"ok:{me.first_name or ''}"
     finally:

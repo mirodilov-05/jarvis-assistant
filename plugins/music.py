@@ -79,22 +79,63 @@ def bring_browser_to_front(delay: float = 1.5) -> None:
     threading.Thread(target=go, daemon=True).start()
 
 
-def play(query: str = "") -> str:
-    """Start music playing. query: artist / track / mood; empty = the default mix."""
-    q = (query or "").strip(" .!?")
+WAVE_WORDS = re.compile(r"^(?:мою волну|волну|моя волна|что угодно|любую|на твой вкус|на ваш вкус|что нибудь|что-нибудь|"
+                        r"сам выбери|выбери сам|рекомендации|мои рекомендации|радио)$", re.I)
+_await: dict = {"until": 0.0}
+
+
+def _yandex_play(url: str, what: str) -> None:
+    """Open Yandex Music in your browser and press its «Воспроизведение» button (like a person would)."""
+    def go():
+        try:
+            import uiclick
+            os.startfile(url)
+            hwnd, t0 = None, time.time()
+            while time.time() - t0 < 15 and not hwnd:
+                time.sleep(0.8)
+                found = uiclick.windows_with_title(r"Яндекс Музык|Yandex Music")
+                hwnd = found[0] if found else None
+            if not hwnd:
+                core.speak("Открыл Яндекс Музыку, но окно не нашёл. Нажмите плей, сэр.", "ru")
+                return
+            bring_browser_to_front(0.1)
+            pressed = uiclick.click_named(hwnd, ["Воспроизведение", "Слушать", "Play"], timeout=15)
+            time.sleep(2.5)
+            if not pressed or not _playing():
+                core.log.info("Yandex Music: play button %s, playing=%s", pressed, _playing())
+                if not _playing():
+                    core.speak("Яндекс Музыку открыл, но звук не пошёл. Нажмите плей, сэр — может, нужно войти в аккаунт.", "ru")
+        except Exception:  # noqa: BLE001
+            core.log.exception("yandex music autoplay")
+    threading.Thread(target=go, daemon=True, name="yandex-play").start()
+
+
+def play(query: str = "", ask: bool = False) -> str:
+    """Start music playing. query: artist / track / mood / «мою волну»; empty + ask -> Jarvis asks what you want."""
+    q = re.sub(r"\b(?:в|на|из|через)\s+(?:яндекс\w*(?:\s+музык\w*)?|ютуб\w*(?:\s+музык\w*)?|youtube)\b", "", (query or ""), flags=re.I)
+    q = re.sub(r"^(?:что[ -]?нибудь|какую[ -]?нибудь|какое[ -]?нибудь|чего[ -]?нибудь)\s+(?=\S)", "", q.strip(" .!?,"), flags=re.I)
+    q = q.strip(" .!?,")
     low = q.lower()
+    generic = not q or low in ("музыку", "музыка", "что нибудь послушать", "что-нибудь послушать")
+    if generic and ask and core.setting("music", "ask_what", True):
+        _await["until"] = time.time() + 60
+        core.FOLLOWUP.set()          # the answer comes without «Джарвис» again
+        return "Что включить, сэр: Мою волну, что-то под настроение — для работы, спокойное, для игры — или кого-то конкретного?"
+    _await["until"] = 0.0          # music is starting: Jarvis is no longer waiting for an answer
     for k, v in MOODS.items():
         if k in low:
-            q = v
+            q = v.replace(" mix", "")
             break
-    if not q or low in ("музыку", "музыка", "что нибудь", "что-нибудь", "что нибудь послушать", "мою волну", "радио"):
-        q = core.setting("music", "default_query", "лучшие хиты mix")
-    service = core.setting("music", "service", "youtube")
+    wave = generic or bool(WAVE_WORDS.match(low))
+    service = core.setting("music", "service", "yandex")
     if service == "yandex":
-        url = f"https://music.yandex.ru/search?text={urllib.parse.quote(q)}"
-        os.startfile(url)
-        bring_browser_to_front()
-        return f"Открыл Яндекс Музыку: {q}. Нажмите ▶, сэр — сайт сам звук не запускает."
+        if wave:
+            _yandex_play("https://music.yandex.ru/", "Моя волна")
+            return "Включаю Мою волну в Яндекс Музыке."
+        _yandex_play(f"https://music.yandex.ru/search?text={urllib.parse.quote(q)}", q)
+        return f"Включаю в Яндекс Музыке: {q}."
+    if wave:
+        q = core.setting("music", "default_query", "лучшие хиты mix")
     try:
         hit = youtube_first(q)
     except Exception as e:  # noqa: BLE001
@@ -111,17 +152,30 @@ def play(query: str = "") -> str:
     return f"Включаю: {title[:80]}."
 
 
+@skill("music.choice", title={"ru": "Ответ на «Что включить?»"},
+       patterns={"ru": [r"^(?:джарвис )?(?:давай |включи |поставь |ну )?(.+)$"]}, examples={"ru": []}, priority=-1)
+def choice(ctx: Ctx):
+    if time.time() > _await["until"]:
+        return None              # Jarvis didn't ask anything: not for us
+    _await["until"] = 0.0
+    if re.match(r"^(?:нет|не надо|ничего|отмена|стоп|не нужно)$", ctx.norm):
+        return "Хорошо, без музыки."
+    return play(ctx.group(1))
+
+
 @skill("music.play", title={"ru": "Включить музыку: сразу играет (исполнитель, трек, настроение)"},
        patterns={"ru": [
            r"^(?:джарвис )?(?:включи|поставь|запусти|открой|сыграй|вруби|давай)(?: мне)?(?: какую нибудь| какую-нибудь)? (?:музыку|музыка|песню|песни|трек|треки|альбом|плейлист|группу|исполнителя)\s*(.*)$",
            r"^(?:джарвис )?(?:включи|поставь|вруби) (?:что нибудь|что-нибудь)(?: послушать)?\s*(.*)$",
-           r"^(?:джарвис )?(?:включи|поставь|вруби) (.+?) (?:на|в) (?:ютубе|youtube|ютуб музык\w*)$",
+           r"^(?:джарвис )?(?:включи|поставь|вруби) (.+?) (?:на|в) (?:ютубе|youtube|ютуб музык\w*|яндекс музык\w*|яндексе)$",
+           r"^(?:джарвис )?(?:включи|поставь|вруби) (мою волну|волну|радио)$",
+           r"^(?:джарвис )?(?:запусти|открой|включи) (?:яндекс|ютуб)\w*(?: музык\w*)? и (?:включи|поставь|запусти|найди)(?: мне)? (.+)$",
            r"^(?:джарвис )?(?:хочу послушать|давай послушаем|послушаем) (.+)$",
        ]},
        examples={"ru": ["Включи музыку", "Включи Imagine Dragons", "Включи музыку для работы", "Поставь трек Believer"]},
        priority=50)
 def play_skill(ctx: Ctx) -> str:
-    return play(ctx.group(1) or "")
+    return play(ctx.group(1) or "", ask=True)
 
 
 @skill("music.artist", title={"ru": "«Включи <исполнитель>» — сразу играет"},
@@ -165,3 +219,33 @@ def pause(ctx: Ctx) -> str:
         return "Сейчас ничего не играет, сэр."
     keyboard.send("play/pause media")
     return "Продолжаю." if resume else "Пауза."
+
+
+
+@skill("music.yandex", title={"ru": "«Яндекс Музыка» — спросит, что включить, и включит"},
+       patterns={"ru": [r"^(?:джарвис )?(?:открой |запусти |включи |давай )?(?:музыку |музыка )?(?:в |на )?яндекс(?: музык\w*)?$",
+                        r"^(?:джарвис )?(?:включи |поставь |давай )?музык\w* (?:в|на|из) яндекс\w*(?: музык\w*)?$"]},
+       examples={"ru": ["Яндекс Музыка", "Музыку в Яндекс Музыке"]}, priority=45)
+def yandex(ctx: Ctx):
+    if ctx.norm.strip() in ("яндекс", "открой яндекс", "запусти яндекс"):
+        return None          # that's the browser
+    core.save_setting("music", "service", "yandex")      # you said where you listen — remember it
+    return play("", ask=True)
+
+
+@skill("music.press_play", title={"ru": "«Нажми плей» — запустить музыку в открытом плеере"},
+       patterns={"ru": [r"^(?:джарвис )?(?:нажми|жми|кликни|тыкни)(?: на)? (?:плей|play|плэй|старт|воспроизведение|кнопку плей)(?: в .+)?$"]},
+       examples={"ru": ["Нажми плей"]}, priority=4)
+def press_play(ctx: Ctx) -> str:
+    import uiclick
+    if _playing():
+        return "Уже играет, сэр."
+    found = uiclick.windows_with_title(r"Яндекс Музык|Yandex Music|YouTube")
+    if found and uiclick.click_named(found[0], ["Воспроизведение", "Слушать", "Play", "Смотреть"], timeout=5):
+        return "Нажал."
+    import keyboard
+    keyboard.send("play/pause media")
+    return "Нажал плей."
+
+
+core._LONG_OK.update({"music.press_play", "music.yandex", "music.choice", "music.pause"})

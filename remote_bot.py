@@ -27,6 +27,7 @@ import threading
 import time
 
 import requests
+from pathlib import Path
 
 import connections
 import core
@@ -132,6 +133,8 @@ def status_text() -> str:
 
 HELP = ("Я Джарвис на вашем ноутбуке. Пишите или говорите голосовым — отвечу голосом.\n"
         "Например: «найди, какие рилсы про нейросети залетели за ночь», «пиши сценарий под меня», «напомни в 8 вечера снять видео».\n\n"
+        "Скиньте мне файл или фото — сохраню на ноутбуке. «Скинь файл договор» — пришлю файл с ноутбука.\n"
+        "Каждое утро в 8:00 — сводка: погода, дела, напоминания.\n\n"
         "Команды:\n/screen — скриншот\n/status — состояние ПК\n/run программа — запустить\n"
         "/close_game — закрыть игру\n/shutdown — выключить ПК\n/cancel — отменить выключение\n"
         "Или просто напишите, как Джарвису: «добавь дело …», «громче», «какая погода».")
@@ -156,6 +159,46 @@ _SCREEN = re.compile(r"(скрин\w*|скриншот\w*|снимок экра�
 _SEND_HERE = re.compile(r"^(?:джарвис,?\s*)?(?:отправь|скинь|пришли|кинь|перешли)(?: мне)?(?: это| его| её| ее| результат| ответ| скрин\w*)?"
                         r"\s*(?:сюда|в этот чат|в чат|мне|в телег\w*|в телеграм\w*|в тг)?\s*$", re.I)
 LAST_SENT: dict = {"kind": "", "data": b"", "text": ""}
+_FILE_RE = re.compile(r"(?:скинь|отправь|пришли|кинь|дай)(?: мне)?(?: сюда)? (?:файл|документ|фото|видео|презентаци\w*|таблиц\w*)\s+(.+)$", re.I)
+INBOX = Path.home() / "Downloads" / "Jarvis"
+
+
+def send_file(chat: int, query: str) -> None:
+    desktop = sys.modules.get("jarvis_plugin_desktop")
+    hits = desktop.find_files(query.strip(" .?")) if desktop else []
+    hits = [h for h in hits if h.is_file() and h.stat().st_size < 49 * 2**20]       # the Bot API limit is 50 MB
+    if not hits:
+        send(chat, f"Не нашёл файл «{query}» на ноутбуке (документы, загрузки, рабочий стол, диск D).")
+        return
+    f = hits[0]
+    call("sendDocument", http_timeout=180, files={"document": (f.name, f.read_bytes())}, chat_id=chat,
+         caption=f"{f.name}\n{f.parent}"[:1000])
+    if len(hits) > 1:
+        send(chat, "Ещё нашёл: " + "; ".join(h.name for h in hits[1:5]))
+
+
+def save_incoming(msg: dict) -> str | None:
+    """A file or photo you sent to the bot is saved on the laptop in Загрузки\\Jarvis."""
+    if msg.get("document"):
+        d = msg["document"]
+        name = d.get("file_name") or f"file_{d['file_unique_id']}"
+        fid = d["file_id"]
+    elif msg.get("photo"):
+        ph = msg["photo"][-1]                     # the biggest size
+        name, fid = f"photo_{time.strftime('%Y-%m-%d_%H-%M-%S')}.jpg", ph["file_id"]
+    elif msg.get("video"):
+        v = msg["video"]
+        name, fid = v.get("file_name") or f"video_{time.strftime('%Y-%m-%d_%H-%M-%S')}.mp4", v["file_id"]
+    else:
+        return None
+    INBOX.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r'[\\/:*?"<>|]', "_", name)
+    target = INBOX / safe
+    if target.exists():
+        target = INBOX / f"{target.stem}_{int(time.time())}{target.suffix}"
+    target.write_bytes(_download(fid))
+    core.emit({"type": "message", "role": "jarvis", "text": f"📥 С телефона: {target.name}", "lang": "ru", "source": "телеграм"})
+    return str(target)
 
 
 def send_screen(chat: int, caption: str = "") -> None:
@@ -187,6 +230,8 @@ def handle_text(chat: int, text: str, voice: bool = False) -> None:
         send_screen(chat, seen)
         if voice:
             answer(chat, seen, voice)
+    elif _FILE_RE.search(low):
+        send_file(chat, _FILE_RE.search(low).group(1))
     elif _SEND_HERE.match(low.strip(" .!")):   # «отправь это сюда / в этот чат»
         if LAST_SENT["kind"] == "photo" and LAST_SENT["data"]:
             call("sendPhoto", http_timeout=60, files={"photo": ("screen.png", LAST_SENT["data"], "image/png")}, chat_id=chat)
@@ -369,6 +414,13 @@ def _dispatch(u: dict) -> None:
     if sender["id"] != owner:
         log.warning("Telegram bot: ignored a message from id %s (@%s)", sender["id"], sender.get("username", ""))
         return
+    saved = save_incoming(msg) if (msg.get("document") or msg.get("photo") or msg.get("video")) else None
+    if saved:
+        caption = (msg.get("caption") or "").strip()
+        send(chat["id"], f"📥 Сохранил на ноутбуке: {saved}")
+        if caption:
+            handle_text(chat["id"], caption)
+        return
     text = msg.get("text") or ""
     media = msg.get("voice") or msg.get("audio") or msg.get("video_note")
     if media and not text:
@@ -384,6 +436,26 @@ def _dispatch(u: dict) -> None:
         handle_text(chat["id"], text)
 
 
+def _morning_loop() -> None:
+    """Every day at [remote] morning (default 08:00): weather, tasks, reminders — in Telegram."""
+    while not _stop.is_set():
+        time.sleep(30)
+        try:
+            when = str(core.setting("remote", "morning", "08:00") or "")
+            if not when or not owner_id() or not token():
+                continue
+            now = core.now()
+            today = now.strftime("%Y-%m-%d")
+            if now.strftime("%H:%M") >= when and core.setting("remote", "morning_sent", "") != today:
+                core.save_setting("remote", "morning_sent", today)
+                briefing = sys.modules.get("jarvis_plugin_briefing")
+                text = briefing.build("ru", greet=True) if briefing else ""
+                if text:
+                    notify("☀️ " + text)
+        except Exception:  # noqa: BLE001
+            log.exception("morning summary")
+
+
 def start() -> None:
     global _thread
     if not token() or not core.setting("remote", "enabled", True):
@@ -393,6 +465,7 @@ def start() -> None:
     _stop.clear()
     _thread = threading.Thread(target=_loop, daemon=True, name="telegram-bot")
     _thread.start()
+    threading.Thread(target=_morning_loop, daemon=True, name="telegram-morning").start()
 
 
 def restart() -> None:

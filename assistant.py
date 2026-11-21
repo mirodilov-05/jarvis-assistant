@@ -452,7 +452,7 @@ def transcribe(audio: np.ndarray, accurate: bool = True, lang_hint: str | None =
     reliable = not (avg_logprob < -1.0 or (no_speech > 0.6 and avg_logprob < -0.6) or compression > 2.4
                     or _HALLUCINATIONS.search(text) or _REPEATS.search(text.replace(" ", ""))
                     # an echo of the vocabulary hint on silence/noise (real commands are heard confidently)
-                    or (text.strip(" .,!?").lower() in PROMPTS.get(lang, "").lower() and (no_speech > 0.3 or avg_logprob < -0.45)))
+                        or (text.strip(" .,!?").lower() in PROMPTS.get(lang, "").lower() and no_speech > 0.3 and avg_logprob < -0.45))
     log.info("STT [%s] %.2f/%.2f/%.1f %s: %s", lang, avg_logprob, no_speech, compression,
              "ok" if reliable else "REJECTED", text[:200])
     if accurate:   # show in the app what was heard
@@ -463,7 +463,7 @@ def transcribe(audio: np.ndarray, accurate: bool = True, lang_hint: str | None =
 def _reliable(text: str, lang: str, avg_logprob: float, no_speech: float, compression: float) -> bool:
     return not (avg_logprob < -1.0 or (no_speech > 0.6 and avg_logprob < -0.6) or compression > 2.4
                 or _HALLUCINATIONS.search(text) or _REPEATS.search(text.replace(" ", ""))
-                or (text.strip(" .,!?").lower() in PROMPTS.get(lang, "").lower() and (no_speech > 0.3 or avg_logprob < -0.45)))
+                or (text.strip(" .,!?").lower() in PROMPTS.get(lang, "").lower() and no_speech > 0.3 and avg_logprob < -0.45))
 
 
 def _transcribe_cloud(audio: np.ndarray, accurate: bool, lang_hint: str | None) -> tuple[str, str, bool]:

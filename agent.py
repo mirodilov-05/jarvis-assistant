@@ -23,7 +23,13 @@ import tools
 _history: list[dict] = []
 
 GUIDE = (
-    "\n\nТы управляешь ноутбуком пользователя через инструменты (tools). Правила:\n"
+    "\n\nТы управляешь ноутбуком пользователя через инструменты (tools). Работай как толковый человек-помощник: "
+    "сначала пойми, ЧТО именно нужно и какой результат пользователь ждёт, потом делай.\n"
+    "Правила:\n"
+    "- Если не хватает важной детали (что именно, кому, когда, в каком виде или где) и её нельзя разумно угадать — "
+    "не действуй наугад: задай ОДИН короткий уточняющий вопрос и закончи его знаком «?».\n"
+    "- Если деталь можно угадать по контексту или по предпочтениям пользователя — не переспрашивай, сделай.\n"
+    "- Всегда учитывай предпочтения пользователя (они ниже) — например, какой сервис он выбрал для музыки.\n"
     "- Если пользователь просит что-то СДЕЛАТЬ или УЗНАТЬ, что умеет инструмент — вызови инструмент, не описывай словами.\n"
     "- Если в просьбе несколько действий — вызови несколько инструментов сразу, в нужном порядке.\n"
     "- «Подготовь к работе / учёбе / игре / ночи» — переключи режим (switch_mode) и сделай, что попросили.\n"
@@ -48,7 +54,26 @@ def _system(text: str) -> str:
     mem = llm.memories_for(text) if llm else []
     if mem:   # semantic memory: what the user told Jarvis before that is about this request
         ctx += "\nПользователь раньше просил запомнить: " + " | ".join(mem)
+    prefs = preferences()
+    if prefs:
+        ctx += "\nПредпочтения пользователя: " + prefs
     return base + GUIDE + ctx
+
+
+def preferences() -> str:
+    """What Jarvis knows about how YOU like things done (settings + what you said)."""
+    out = []
+    service = core.setting("music", "service", "yandex")
+    out.append("музыка — " + ("Яндекс Музыка" if service == "yandex" else "YouTube"))
+    if core.setting("creator", "about", ""):
+        out.append("канал про " + core.setting("creator", "about", ""))
+    if core.setting("creator", "style", ""):
+        out.append("стиль контента: " + core.setting("creator", "style", ""))
+    name = core.CONFIG.get("assistant", {}).get("user_name", "")
+    if name:
+        out.append("зовут " + name)
+    out.append("браузер — Яндекс Браузер; игры — CS2 (Steam)")
+    return "; ".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +264,18 @@ def _think(text: str) -> tuple[str, list]:
     if llm and llm.provider() == "cloud":
         import cloud
         try:
-            return _call_cloud(system, messages)
+            content, calls = _call_cloud(system, messages)
+            if not calls and _CLAIM.search(content or "") and not (content or "").rstrip().endswith("?"):
+                core.log.info("Cloud brain claimed an action without a tool: %r — retrying", content)
+                retry = messages + [{"role": "assistant", "content": content},
+                                    {"role": "user", "content": "Ты ничего не сделал — инструмент не вызван. Вызови нужный "
+                                                                "инструмент для моей просьбы. Если не понял, что сделать — "
+                                                                "задай один короткий вопрос."}]
+                content2, calls2 = _call_cloud(system, retry)
+                if calls2 or (content2 or "").rstrip().endswith("?"):
+                    return content2, calls2
+                return "Не понял, что именно сделать, сэр. Скажите по-другому.", []
+            return content, calls
         except Exception:  # noqa: BLE001
             core.log.exception("Cloud tool call failed")
             if not cloud.local_fallback():
@@ -339,7 +375,8 @@ _NO_SPLIT = re.compile(r"(?:запомни|создай|сохрани|доба�
                        r"^(?:джарвис )?(?:запомни|запиши заметку|заметка)|напиши (?:сообщение|маме|папе|в )|"
                        r"^(?:джарвис )?(?:напечатай|набери|впиши|введи)|(?:напиши|составь|сочини|набросай|придумай|дай)(?: мне)? "
                        r"(?:промпт|промт|запрос|текст|пост|письмо|ответ|описание|резюме|комментарий|статью|сценарий|план|отзыв|"
-                       r"поздравление|объявление)|скопируй (?:текст)?\s*:|сценари|рилс|шортс|залетел", re.I)
+                       r"поздравление|объявление)|скопируй (?:текст)?\s*:|сценари|рилс|шортс|залетел|"
+                       r"(?:яндекс|ютуб)\w*(?: музык\w*)? и (?:включи|поставь|запусти)", re.I)
 
 
 def split_chain(text: str) -> list[str]:

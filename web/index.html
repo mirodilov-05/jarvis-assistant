@@ -692,6 +692,7 @@ function connect() {
     else if (ev.type === "data") { refreshSoon(); if (AUTO_CARD[ev.file] && Date.now() - lastAct < 15000) setTimeout(() => PANELS[AUTO_CARD[ev.file]](), 400); }
     else if (ev.type === "settings" || ev.type === "v3" || ev.type === "macros" || ev.type === "focus" || ev.type === "translate_live" || ev.type === "remote") { loadV3(); if (ev.type === "settings") refreshSoon(); }
     else if (ev.type === "reload") location.reload();
+    else if (ev.type === "open") { openDrawer(ev.panel || "settings"); if (ev.section) { openSecs.add(ev.section); store.set("openSecs", [...openSecs]); setTimeout(() => { const d = document.getElementById(ev.section); if (d) { d.open = true; d.scrollIntoView({ behavior: "smooth" }); } }, 700); } }
     else if (ev.type === "profiles") { if ($("#settings").classList.contains("open")) loadProfiles(); }
     else if (ev.type === "connections") { if ($("#settings").classList.contains("open")) loadConn(); }
     else if (ev.type === "game") { game = ev.on; setStatus(); toast(ev.on ? "🎮 Игровой режим: " + ev.name : "Игровой режим выключен"); }

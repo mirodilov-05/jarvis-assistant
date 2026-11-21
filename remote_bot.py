@@ -139,6 +139,7 @@ HELP = ("Я Джарвис на вашем ноутбуке. Пишите или
 
 def answer(chat: int, text: str, voice: bool = False) -> None:
     """Reply in text; to a voice message also with Jarvis's voice (Telegram voice note)."""
+    LAST_SENT.update(kind="text", text=text or "")
     send(chat, text or "Готово.")
     if voice and text and core.setting("remote", "voice_replies", True):
         try:
@@ -147,6 +148,21 @@ def answer(chat: int, text: str, voice: bool = False) -> None:
                 call("sendVoice", http_timeout=60, files={"voice": ("jarvis.ogg", ogg, "audio/ogg")}, chat_id=chat)
         except Exception as e:  # noqa: BLE001
             log.warning("voice reply failed: %s", e)
+
+
+# in the bot «скрин» means: send the picture HERE (not save it on the laptop)
+_SCREEN = re.compile(r"(скрин\w*|скриншот\w*|снимок экрана|сфоткай экран|сфотографируй экран|покажи (?:мне )?экран|"
+                     r"что (?:у меня |сейчас )?на (?:экране|ноуте|компе|ноутбуке))", re.I)
+_SEND_HERE = re.compile(r"^(?:джарвис,?\s*)?(?:отправь|скинь|пришли|кинь|перешли)(?: мне)?(?: это| его| её| ее| результат| ответ| скрин\w*)?"
+                        r"\s*(?:сюда|в этот чат|в чат|мне|в телег\w*|в телеграм\w*|в тг)?\s*$", re.I)
+LAST_SENT: dict = {"kind": "", "data": b"", "text": ""}
+
+
+def send_screen(chat: int, caption: str = "") -> None:
+    png = _screen_png()
+    LAST_SENT.update(kind="photo", data=png)
+    call("sendPhoto", http_timeout=60, files={"photo": ("screen.png", png, "image/png")}, chat_id=chat,
+         **({"caption": caption[:1000]} if caption else {}))
 
 
 _WAKE_PC = re.compile(r"^(?:джарвис,?\s*)?(?:включи|разбуди|запусти)(?: мой| мне)? (?:комп\w*|пк|ноут\w*)$", re.I)
@@ -160,9 +176,24 @@ def handle_text(chat: int, text: str, voice: bool = False) -> None:
         answer(chat, "Включил. На связи, что делаем?", voice)
     elif cmd in ("/start", "/help", "помощь"):
         send(chat, HELP)
-    elif cmd in ("/screen", "скриншот", "/screenshot", "экран"):
-        png = _screen_png()
-        call("sendPhoto", http_timeout=60, files={"photo": ("screen.png", png, "image/png")}, chat_id=chat)
+    elif cmd in ("/screen", "/screenshot") or (_SCREEN.search(low) and not re.search(r"\bчто\b", low)):
+        send_screen(chat)
+    elif _SCREEN.search(low):           # «что у меня на экране?» — the picture and what Jarvis sees on it
+        import vision
+        try:
+            seen = vision.look("Что на экране? Коротко.")
+        except Exception as e:  # noqa: BLE001
+            seen = f"Не смог рассмотреть: {str(e)[:80]}"
+        send_screen(chat, seen)
+        if voice:
+            answer(chat, seen, voice)
+    elif _SEND_HERE.match(low.strip(" .!")):   # «отправь это сюда / в этот чат»
+        if LAST_SENT["kind"] == "photo" and LAST_SENT["data"]:
+            call("sendPhoto", http_timeout=60, files={"photo": ("screen.png", LAST_SENT["data"], "image/png")}, chat_id=chat)
+        else:
+            creator = sys.modules.get("jarvis_plugin_creator")
+            title, text = creator.last_text() if creator and creator.LAST["text"] else ("", LAST_SENT["text"])
+            send(chat, (f"📌 {title}\n\n{text}" if title and text else text) or "Пока нечего отправлять.")
     elif cmd in ("/status", "статус"):
         send(chat, status_text())
     elif cmd == "/run":

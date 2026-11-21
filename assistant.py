@@ -1523,6 +1523,11 @@ def run_server() -> None:
             "onboarded": bool(core.setting("ui", "onboarded", False)),
         }
 
+    async def ui_open(r):
+        body = await r.json()
+        core.emit({"type": "open", "panel": str(body.get("panel", "settings")), "section": str(body.get("section", ""))})
+        return web.json_response({"ok": True})
+
     async def say(r):
         body = await r.json()
         speaker.say(str(body.get("text", ""))[:300] or "Проверка голоса, сэр.", "ru")
@@ -1877,7 +1882,7 @@ def run_server() -> None:
         web.delete("/api/macros/{id}", macros_delete), web.post("/api/macros/{id}/run", macros_run),
         web.post("/api/pack", pack_set), web.post("/api/translate", translate), web.post("/api/translate/live", translate_live),
         web.get("/api/remote", remote_get), web.post("/api/remote", remote_set),
-        web.post("/api/capsule", capsule), web.post("/api/window/hide", window_hide), web.post("/api/say", say),
+        web.post("/api/capsule", capsule), web.post("/api/window/hide", window_hide), web.post("/api/say", say), web.post("/api/ui/open", ui_open),
         web.get("/api/state", state), web.post("/api/command", command),
         web.post("/api/listen", listen), web.post("/api/stop", stop_speaking),
         web.post("/api/voice/{action}", voice_action),

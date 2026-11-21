@@ -51,3 +51,18 @@ def translate_live(ctx: Ctx) -> str:
     import pcx
     on = not any(w in ctx.norm for w in ("выключи", "останови", "отключи"))
     return pcx.translate_live(on)
+
+
+
+@skill("ui.settings", title={"ru": "Открыть настройки / подключения в окне"},
+       patterns={"ru": [r"(?:открой|покажи) (?:мне )?(подключени\w*|настройки джарвиса|свои настройки|твои настройки|ключи|телеграм бот\w*|режимы|макрос\w*)$"]},
+       examples={"ru": ["Открой подключения", "Открой настройки"]}, priority=7)
+def open_settings(ctx: Ctx) -> str:
+    import tray
+    w = ctx.group(1)
+    section = {"подключ": "secConn", "ключи": "secKeys", "телеграм": "secBot", "режимы": "secModes", "свои": "", "твои": ""}.get(
+        next((k for k in ("подключ", "ключи", "телеграм", "режимы") if w.startswith(k)), ""), "")
+    panel = "macros" if w.startswith("макрос") else "settings"
+    tray.show_window()
+    core.emit({"type": "open", "panel": panel, "section": section})
+    return "Открыл, сэр."

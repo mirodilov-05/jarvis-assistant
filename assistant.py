@@ -159,23 +159,30 @@ def speakable(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+OUT_LEVEL = {"v": 0.0}       # loudness of Jarvis's own voice, for the HUD
+
+
 class Speaker:
     def __init__(self) -> None:
-        self._q: queue.Queue[tuple[str, str]] = queue.Queue()
+        self._q: queue.Queue[tuple[str, str, int]] = queue.Queue()
         self._stop = threading.Event()
         self.speaking = threading.Event()
         self.last_end = 0.0
         self._piper: dict = {}
         self._edge_off_until = 0.0
+        self.gain = 1.0              # 0.3 while deciding whether you are interrupting
+        self.last_text = ""
+        self.current = ""            # what he is saying now (to tell his own echo from your words)
+        self.gen = 0                 # stop() makes everything said before it void
         threading.Thread(target=self._run, daemon=True, name="tts").start()
 
     def say(self, text: str, lang: str = "ru") -> None:
         text = speakable(text or "")
         if text:
-            self._stop.clear()
-            self._q.put((text, lang))
+            self._q.put((text, lang, self.gen))
 
     def stop(self) -> None:
+        self.gen += 1
         self._stop.set()
         while not self._q.empty():
             try:
@@ -222,21 +229,32 @@ class Speaker:
                     threading.Thread(target=vp.set_tts_voice, args=(vname, chunk.audio_int16_array, chunk.sample_rate),
                                      daemon=True).start()
                 if stream is None:
-                    stream = sd.OutputStream(samplerate=chunk.sample_rate, channels=1, dtype="int16")
+                    stream = sd.OutputStream(samplerate=chunk.sample_rate, channels=1, dtype="int16", latency="low")
                     stream.start()
-                data = chunk.audio_int16_array
-                if core.feature("quiet_voice"):
-                    data = (data.astype(np.float32) * 0.45).astype(np.int16)
-                for i in range(0, len(data), 2048):
-                    if self._stop.is_set():
-                        break
-                    stream.write(data[i:i + 2048])
-                stream.write(np.zeros(int(chunk.sample_rate * 0.12), dtype=np.int16))  # small pause between sentences
+                self._write(stream, chunk.audio_int16_array)
+                self._write(stream, np.zeros(int(chunk.sample_rate * 0.12), dtype=np.int16))  # pause between sentences
         finally:
-            if stream is not None:
-                stream.stop()
-                stream.close()
+            self._close(stream)
         return True
+
+    def _write(self, stream, data: np.ndarray) -> None:
+        """Small pieces, so «стоп» and getting quieter work at once."""
+        quiet = 0.45 if core.feature("quiet_voice") else 1.0
+        for i in range(0, len(data), 1024):
+            if self._stop.is_set():
+                return
+            OUT_LEVEL["v"] = float(np.abs(data[i:i + 1024]).mean())
+            g = quiet * self.gain
+            stream.write(data[i:i + 1024] if g == 1.0 else (data[i:i + 1024].astype(np.float32) * g).astype(np.int16))
+
+    def _close(self, stream) -> None:
+        OUT_LEVEL["v"] = 0.0
+        if stream is not None:
+            if self._stop.is_set():
+                stream.abort()          # drop what is still in the sound card: silence right now
+            else:
+                stream.stop()
+            stream.close()
 
     def _edge(self, text: str, lang: str) -> bool:
         import edge_tts
@@ -245,28 +263,37 @@ class Speaker:
             return False
         voice = cfg("voice", f"edge_voice_{lang}") or {"ru": "ru-RU-DmitryNeural", "uz": "uz-UZ-SardorNeural"}[lang]
         path = os.path.join(tempfile.gettempdir(), "jarvis_tts.mp3")
-        for attempt in (1, 2):
+        # Russian has an offline voice (Piper) to fall back on at once, so Edge gets one short try.
+        # Before, two 6-second tries meant a silent pause of up to 12 s on every reply.
+        attempts = (1,) if lang == "ru" else (1, 2)
+        timeout = 1.5 if lang == "ru" else 6
+        for attempt in attempts:
             try:
                 comm = edge_tts.Communicate(text, voice, rate=str(cfg("voice", "edge_rate", "+0%")),
                                             pitch=str(cfg("voice", "edge_pitch", "+0Hz")))
-                asyncio.run(asyncio.wait_for(comm.save(path), timeout=6))
+                asyncio.run(asyncio.wait_for(comm.save(path), timeout=timeout))
                 break
             except Exception as e:  # noqa: BLE001
                 log.warning("edge-tts attempt %d failed (%s)", attempt, type(e).__name__)
-                if attempt == 2:
-                    self._edge_off_until = time.time() + 120
+                if attempt == attempts[-1]:
+                    self._edge_off_until = time.time() + 900      # unreliable now: local voice for 15 minutes
                     return False
                 time.sleep(0.4)
-        _mci("close jarvis")
-        _mci(f'open "{path}" type mpegvideo alias jarvis')
-        _mci("setaudio jarvis volume to " + ("450" if core.feature("quiet_voice") else "1000"))
-        _mci("play jarvis")
-        while _mci("status jarvis mode") == "playing":
-            if self._stop.is_set():
-                _mci("stop jarvis")
-                break
-            time.sleep(0.05)
-        _mci("close jarvis")
+        import av
+        stream = None
+        try:
+            with av.open(path) as f:
+                rs = av.AudioResampler(format="s16", layout="mono", rate=24000)
+                for frame in f.decode(audio=0):
+                    for fr in rs.resample(frame):
+                        if stream is None:
+                            stream = sd.OutputStream(samplerate=24000, channels=1, dtype="int16", latency="low")
+                            stream.start()
+                        self._write(stream, fr.to_ndarray().reshape(-1).astype(np.int16))
+                    if self._stop.is_set():
+                        break
+        finally:
+            self._close(stream)
         return True
 
     def _sapi(self, voice, text: str) -> None:
@@ -292,7 +319,13 @@ class Speaker:
         except Exception:  # noqa: BLE001
             log.exception("Piper voice failed to load")
         while True:
-            text, lang = self._q.get()
+            text, lang, gen = self._q.get()
+            if gen != self.gen:
+                continue
+            self._stop.clear()
+            if gen != self.gen:          # stopped in this very moment
+                continue
+            self.current, self.gain = text, 1.0
             self.speaking.set()
             set_status("speaking")
             try:
@@ -310,9 +343,10 @@ class Speaker:
                 log.exception("TTS failed")
             finally:
                 self.speaking.clear()
+                self.last_text, self.current = text, ""
                 self.last_end = time.time()
                 if self._q.empty():
-                    set_status("listening")
+                    set_status(LISTENER.base_status() if LISTENER else "listening")
 
 
 speaker = Speaker()
@@ -363,7 +397,7 @@ def whisper(kind: str = "main"):
 
 
 PROMPTS = {
-    "ru": "Джарвис, открой телеграм, ватсап, ютуб, Яндекс Музыку. Добавь дело. Сколько у меня дел? Напиши маме. Запись. Стоп.",
+    "ru": "Открой Telegram. Включи Яндекс Музыку. Стоп музыка. Закрой вкладку. Выключи ноутбук. YouTube, WhatsApp, Steam, Discord, CS2.",
     "uz": "Jarvis, telegramni och, vazifa qo'sh, nechta vazifam bor, yozib ol, to'xtat.",
 }
 _HALLUCINATIONS = re.compile(
@@ -466,11 +500,11 @@ def _reliable(text: str, lang: str, avg_logprob: float, no_speech: float, compre
                 or (text.strip(" .,!?").lower() in PROMPTS.get(lang, "").lower() and no_speech > 0.3 and avg_logprob < -0.45))
 
 
-def _transcribe_cloud(audio: np.ndarray, accurate: bool, lang_hint: str | None) -> tuple[str, str, bool]:
+def _transcribe_cloud(audio: np.ndarray, accurate: bool, lang_hint: str | None, hint: bool = True) -> tuple[str, str, bool]:
     """Groq Whisper large-v3 turbo: ~0.3 s, nothing on the GPU."""
     allowed = langs()
     lang = lang_hint or (allowed[0] if len(allowed) == 1 else None)
-    res = cloud.transcribe(audio, lang, PROMPTS.get(lang or "ru") if accurate else None)
+    res = cloud.transcribe(audio, lang, PROMPTS.get(lang or "ru") if accurate and hint else None)
     text, lang, segs = res["text"], res["lang"], res["segments"]
     if lang not in core.LANGS:
         lang = allowed[0]
@@ -535,10 +569,10 @@ def is_jarvis(word: str) -> bool:
         return False
     if not (p.startswith("j") or p.startswith("dar") or p.startswith("yar")):
         return False
-    if len(p) < 5 or not re.search(r"[sz](a|i|u|ga|ni|y)?$", p):   # the name ends in "-is": жарис, javvis, jarrus
+    if len(p) < 5 or not re.search(r"[sz](a|i|u|ga|ni|y|ov|ev|ova|ovu)?$", p):   # the name ends in "-is": жарис, javvis, jarrus, джарисов
         return False
     # "jar…s/z" with up to 3 letters in between: jaris, jarus, jaruz, jaryus, jarvis, jarles…
-    if re.fullmatch(r"(j|dj|dar|yar)[aeo]?r\w{0,3}[sz](a|i|u|ga|ni|y)?", p) and len(p) <= 8:
+    if re.fullmatch(r"(j|dj|dar|yar)[aeo]?r\w{0,3}[sz](a|i|u|ga|ni|y|ov|ev|ova|ovu)?", p) and len(p) <= 9:
         return True
     ratio = max(difflib.SequenceMatcher(None, p, t).ratio() for t in ("jarvis", "jarvisa", "jarvisi"))
     return ratio >= float(cfg("wake", "name_similarity", 0.62))
@@ -662,7 +696,8 @@ def sfx(name: str, wait: bool = True, fallback: tuple[int, int] = (880, 90)) -> 
     """Short interface sound (voices/sfx/<name>.wav); a plain beep if the file is missing or sounds are off."""
     path = SFX_DIR / f"{name}.wav"
     if not cfg("voice", "ui_sounds", True) or not path.exists():
-        winsound.Beep(*fallback)
+        if wait:
+            winsound.Beep(*fallback)
         return
     winsound.PlaySound(str(path), winsound.SND_FILENAME | (0 if wait else winsound.SND_ASYNC))
 
@@ -725,9 +760,46 @@ class AGC:
         return np.clip(x * self.gain, -32768, 32767).astype(np.int16)
 
 
+def spot(audio: np.ndarray) -> tuple[str, float]:
+    """What the small local Whisper hears (for the name and «стоп»): (text, confidence). Never leaves the computer."""
+    if voiced_seconds(audio) < 0.2:
+        return "", -9.0
+    if not (cloud.stt_enabled() and cfg("cloud", "local_spotting", True)):
+        text, _, reliable = transcribe(audio, accurate=False)
+        return text, -0.2 if reliable else -2.0
+    segs, _ = whisper("spot").transcribe(audio.astype(np.float32) / 32768.0, language="ru", beam_size=2, vad_filter=False,
+                                         without_timestamps=True, condition_on_previous_text=False, temperature=0.0,
+                                         initial_prompt="Эй, Джарвис.")
+    out = list(segs)
+    text = " ".join(s.text.strip() for s in out).strip()
+    return text, (sum(s.avg_logprob for s in out) / len(out)) if out else -9.0
+
+
+_HUSH_START = re.compile(r"^(?:джарвис )?(?:стоп|топ|хватит|замолчи|помолчи|молчи|тихо|тише|достаточно|подожди|погоди|отмена|"
+                         r"отмени|остановись|перестань|все все|ладно хватит)\b")
+
+
+def own_words(text: str) -> float:
+    """How much of a heard phrase is just Jarvis's own words coming back through the microphone (0…1)."""
+    heard = [w for w in core.normalize(text, "ru").split() if len(w) > 2]
+    mine = set(core.normalize(speaker.current or (speaker.last_text if time.time() - speaker.last_end < 4 else ""), "ru").split())
+    return sum(w in mine for w in heard) / len(heard) if heard else 0.0
+
+
+# how long Jarvis waits for your answer after a question or «Слушаю», then goes back to sleep
+LISTEN_SECONDS = 5
+
+
 class Listener:
+    """The microphone is never switched off: Jarvis hears you while he talks and while he thinks.
+
+    mode  idle     waiting for the name (or, while he talks, for you to interrupt him)
+          command  you called him: the next phrase is the command
+          answer   he asked something: the next phrase is the answer, no name needed
+    """
     SPEECH_ON = 0.55     # VAD probability that counts as speech
     SPEECH_OFF = 0.35
+    SURE = -0.40         # the local model is sure it heard the name (real log: your calls ≥ −0.28, room noise ≤ −0.50)
 
     def __init__(self) -> None:
         from openwakeword.vad import VAD
@@ -741,9 +813,21 @@ class Listener:
         self.vad = VAD()
         self.agc = AGC(max_gain=float(cfg("voice", "max_gain", 20)))
         self.manual = threading.Event()
+        self.todo: queue.Queue = queue.Queue()       # things that need the microphone for themselves (dictation)
         self.recent = collections.deque(maxlen=25)   # last 2 s of audio for wake-word verification
-        self.barge = collections.deque(maxlen=15)    # last 1.2 s while Jarvis talks (barge-in)
-        self.barge_checked = 0.0
+        self.mode, self.deadline, self.depth, self.retry = "idle", 0.0, 0, True
+        self.gen = 0                                 # each new request cancels the previous one
+        self.thinking = 0                            # gen of the request being worked on, 0 = none
+        self.ducked = False
+        self._utter_reset()
+
+    # -- small helpers -----------------------------------------------------
+    def _utter_reset(self) -> None:
+        self.utter: list[np.ndarray] = []
+        self.quiet, self.voiced = 0.0, 0
+        self.woken = False            # this phrase contains the wake word
+        self.over_speech = False      # it started while Jarvis was talking
+        self.checked_at = 0.0         # seconds of the phrase already checked for an interruption
 
     def _callback(self, indata, frames, t, status) -> None:
         LEVEL["v"] = float(np.abs(indata).mean())   # for the HUD reactor; ~1 µs
@@ -762,10 +846,34 @@ class Listener:
     def speech_prob(self, chunk: np.ndarray) -> float:
         return float(self.vad.predict(chunk, frame_size=640))
 
+    def base_status(self) -> str:
+        return "recording" if self.mode != "idle" else "thinking" if self.thinking else "listening"
+
+    def _status(self) -> None:
+        if not speaker.speaking.is_set():
+            set_status(self.base_status())
+
+    def set_mode(self, mode: str, seconds: float = 0.0) -> None:
+        self.mode, self.deadline = mode, time.time() + seconds
+        if mode == "idle":
+            if self.ducked:
+                self.ducked = False
+                duck_end_later()
+        elif not self.ducked:
+            self.ducked = True
+            duck_start()              # music and video get quiet while we talk
+        self._status()
+
+    def cancel(self) -> None:
+        """Drop whatever Jarvis is saying or thinking about."""
+        self.gen += 1
+        self.thinking = 0
+        speaker.stop()
+
     def record_command(self, start_timeout: float = 7.0, silence: float | None = None, max_len: float = 25.0, prefix=None):
-        """Record one utterance using the neural VAD (doesn't cut quiet words or short pauses)."""
-        if silence is None:   # how long a pause means «I'm done» — shorter = faster answers
-            silence = float(cfg("voice", "end_silence", 0.75))
+        """Record one utterance using the neural VAD (used by dictation)."""
+        if silence is None:
+            silence = float(cfg("voice", "end_silence", 0.7))
         chunks: list[np.ndarray] = []
         pre = collections.deque(maxlen=6)          # 0.48 s pre-roll
         started, quiet, voiced, t0 = False, 0.0, 0, time.time()
@@ -790,145 +898,329 @@ class Listener:
                 break
         return np.concatenate(chunks)
 
+    # -- main loop ---------------------------------------------------------
     def run(self) -> None:
         """Keep listening forever: reopen the microphone if it disappears (headset unplugged etc.)."""
         while True:
             try:
-                self._listen()
+                with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=FRAME, callback=self._callback):
+                    log.info("Listening. Wake models: %s", list(self.wake.models))
+                    self._status()
+                    self.loop()
             except Exception:  # noqa: BLE001
                 log.exception("Microphone stream failed; reopening in 3 s")
                 set_status("starting")
                 time.sleep(3)
 
-    def _listen(self) -> None:
-        with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=FRAME, callback=self._callback):
-            log.info("Listening. Wake models: %s", list(self.wake.models))
-            set_status("listening")
-            utter: list[np.ndarray] = []
-            pre = collections.deque(maxlen=5)
-            quiet = 0.0
-            last_beat = 0.0
-            while True:
-                try:
-                    chunk = self.agc(self.frames.get(timeout=5))
-                except queue.Empty:
-                    raise RuntimeError("no audio from the microphone for 5 s")
-                now_t = time.time()
-                if now_t - last_beat > 10:      # heartbeat for the supervisor (proves the audio loop is alive)
-                    last_beat = now_t
-                    (core.DATA / "heartbeat").write_text(str(int(now_t)))
-                if core.RECORD_REQUEST.is_set():
-                    core.RECORD_REQUEST.clear()
-                    self.voice_record(core.RECORD_LANG.get("lang", "ru"))
-                    utter, quiet = [], 0.0
+    def loop(self, stop: threading.Event | None = None) -> None:
+        pre = collections.deque(maxlen=8)          # 0.64 s before the first word: «Стоп» must not become «Топ»
+        last_beat = 0.0
+        while not (stop and stop.is_set()):
+            try:
+                chunk = self.agc(self.frames.get(timeout=5))
+            except queue.Empty:
+                if stop:
                     continue
-                if core.ENROLL_REQUEST.is_set():
-                    core.ENROLL_REQUEST.clear()
-                    self.enroll_voice()
-                    utter, quiet = [], 0.0
-                    continue
-                if self.manual.is_set():
-                    self.manual.clear()
-                    self.on_wake()
-                    utter, quiet = [], 0.0
-                    continue
-                if speaker.busy():
-                    utter, quiet = [], 0.0
-                    self.recent.clear()
-                    if self.barge_in(chunk):
-                        self.barge.clear()
-                    continue
-                self.barge.clear()
-                self.recent.append(chunk)
-                # 1) "Hey Jarvis" & co. — instant, then double-checked by speech recognition
-                scores = self.wake.predict(chunk)
-                thr = float(cfg("wake", "threshold", 0.4))
-                name, score = max(scores.items(), key=lambda kv: kv[1]) if scores else ("", 0)
-                if score >= thr:
-                    if self.verify_wake(name, score):
-                        self.on_wake()
-                    self.wake.reset()
-                    self.recent.clear()
-                    utter, quiet = [], 0.0
-                    continue
-                # 2) "Джарвис, …" inside normal speech
-                if not core.feature("name_listening") or (GAME["on"] and not cfg("performance", "names_in_games", True)):
-                    continue
-                if cloud.stt_enabled() and not cfg("cloud", "names_in_speech", True):
-                    continue   # turned off in config: wake by "Hey Jarvis" only
-                p = self.speech_prob(chunk)
-                if p >= self.SPEECH_ON:
-                    if not utter:
-                        utter.extend(pre)
-                    utter.append(chunk)
-                    quiet = 0.0
-                elif utter:
-                    utter.append(chunk)
-                    quiet += 0.08
+                raise RuntimeError("no audio from the microphone for 5 s")
+            now_t = time.time()
+            if now_t - last_beat > 10:      # heartbeat for the supervisor (proves the audio loop is alive)
+                last_beat = now_t
+                (core.DATA / "heartbeat").write_text(str(int(now_t)))
+            if self._exclusive():           # recorder / voice enrolment / dictation had the microphone
+                self._utter_reset()
+                pre.clear()
+                self.recent.clear()
+                continue
+            talking = speaker.speaking.is_set()
+            self.recent.append(chunk)
+
+            # 1) «Эй, Джарвис» — works in any state, also while he talks or thinks
+            scores = self.wake.predict(chunk)
+            name, score = max(scores.items(), key=lambda kv: kv[1]) if scores else ("", 0.0)
+            if score >= float(cfg("wake", "threshold", 0.4)) and self.mode != "command":
+                if self.verify_wake(name, score):
+                    self.called()
+                    if self.utter:
+                        self.woken = True   # the phrase goes on: «Эй, Джарвис, включи музыку» in one breath
+                    else:
+                        self.greet()        # the name is already finished
+                self.wake.reset()
+
+            # 2) collect a phrase
+            p = self.speech_prob(chunk)
+            if not self.utter:
+                pre.append(chunk)
+                self.voiced = self.voiced + 1 if p >= self.SPEECH_ON else 0
+                if self.voiced >= 2:
+                    self.utter = list(pre)
+                    pre.clear()
+                    self.quiet = 0.0
+                    self.over_speech = talking
                 else:
-                    pre.append(chunk)
-                dur = len(utter) * 0.08
-                max_dur = 4.5 if GAME["on"] else 10   # in games only short phrases: commands, not team chatter
-                if utter and (quiet >= 0.7 or dur > max_dur + 0.5):
-                    audio = np.concatenate(utter)
-                    utter, quiet = [], 0.0
-                    if 0.4 <= dur <= max_dur:
-                        self.check_names(audio)
+                    self._timeouts(talking)
+                    continue
+            else:
+                self.utter.append(chunk)
+                self.quiet = 0.0 if p >= self.SPEECH_OFF else self.quiet + 0.08
+
+            dur = len(self.utter) * 0.08
+            if talking and self.mode == "command" and dur >= 0.96 and self.quiet == 0.0:
+                speaker.stop()              # you are already giving the command: no need to finish «Слушаю»
+            # 3) interrupting: first get quieter at once, then decide whether it is really you
+            if talking and self.mode != "command" and not self.woken and dur - self.checked_at >= 0.9 and self.quiet < 0.2:
+                if self.checked_at == 0.0:
+                    speaker.gain = 0.3
+                self.checked_at = dur
+                self.interruption(np.concatenate(self.utter), final=False)
+
+            # 4) the phrase is over
+            end_silence = 0.5 if (talking and self.mode == "idle") else min(0.7, float(cfg("voice", "end_silence", 0.7)))
+            limit = 20.0 if (self.mode != "idle" or self.woken) else (4.5 if GAME["on"] else 10.0)
+            if self.quiet >= end_silence or dur > limit + 0.5:
+                audio, woken, over = np.concatenate(self.utter), self.woken, self.over_speech
+                too_long = dur > limit
+                self._utter_reset()
+                self.vad.reset_states()
+                self.phrase(audio, woken, over, too_long)
+                speaker.gain = 1.0
+
+    def _exclusive(self) -> bool:
+        if core.RECORD_REQUEST.is_set():
+            core.RECORD_REQUEST.clear()
+            self.voice_record(core.RECORD_LANG.get("lang", "ru"))
+        elif core.ENROLL_REQUEST.is_set():
+            core.ENROLL_REQUEST.clear()
+            self.enroll_voice()
+        elif self.manual.is_set():
+            self.manual.clear()
+            self.cancel()
+            sfx("wake", wait=False)
+            self.set_mode("command", LISTEN_SECONDS)
+            return False
+        elif not self.todo.empty():
+            self.todo.get()()
+        else:
+            return False
+        self.set_mode("idle")
+        return True
+
+    def _timeouts(self, talking: bool) -> None:
+        """Nobody said anything after «Слушаю» / after his question."""
+        if self.mode == "idle":
+            return
+        if talking:                              # he is still speaking: the time to answer starts when he finishes
+            self.deadline = max(self.deadline, time.time() + LISTEN_SECONDS)
+        elif time.time() > self.deadline:
+            if self.mode == "answer":
+                core.PENDING.clear()
+            else:
+                sfx("cancel", wait=False, fallback=(440, 110))
+            self.set_mode("idle")
+
+    # -- deciding what a phrase is -------------------------------------------
+    def called(self) -> None:
+        """The wake word: instant signal, stop talking, the command follows."""
+        self.cancel()
+        sfx("wake", wait=False)
+        self.depth, self.retry = 0, True
+        self.set_mode("command", LISTEN_SECONDS)
+
+    def greet(self) -> None:
+        """Only the name was said: answer like a person — without closing the ears."""
+        self.set_mode("command", LISTEN_SECONDS)
+        if core.feature("wake_reply") and core.mode() != "quiet":
+            macros = _plugin("macros")
+            if not (macros and macros.play("wake")):
+                speaker.say(random.choice(WAKE_REPLIES.get(core.mode(), WAKE_REPLIES["polite"])), "ru")
 
     def verify_wake(self, name: str, score: float) -> bool:
         audio = np.concatenate(list(self.recent)) if self.recent else None
         if audio is None:
             return False
-        text, _, _ = transcribe(audio, accurate=False)
+        text, sure = spot(audio)
         words = re.findall(r"[\w'ʻ’]+", text)
         ok = any(is_jarvis(w) for w in words) or bool(re.search(r"(алекс|alex|mycroft|майкр)", text, re.I)) or score >= 0.8
-        log.info("Wake phrase %s (%.2f) heard as %r -> %s", name, score, text, "accepted" if ok else "ignored")
+        if ok and speaker.speaking.is_set() and own_words(text) >= 0.6 and score < 0.6:
+            ok = False                      # he said his own name
+        log.info("Wake phrase %s (%.2f) heard as %r %.2f -> %s", name, score, text, sure, "accepted" if ok else "ignored")
         return ok and self.owner(audio, "wake phrase")
 
-    def owner(self, audio: np.ndarray, what: str) -> bool:
+    def owner(self, audio: np.ndarray, what: str, need: float | None = None) -> bool:
         """Voice lock: is this the owner speaking? (always yes until «Запомни мой голос»; stricter in games)"""
         if not core.feature("voice_lock"):
             return True
         ok, score = vp.is_owner(audio, strict=GAME["on"])
         if score is not None:
             core.CONFIG["_last_voice_score"] = score
+            if need is not None:
+                ok = score >= need
             log.info("Voice check (%s): %.2f -> %s", what, score, "owner" if ok else "someone else, ignored")
         return ok
 
-    def barge_in(self, chunk: np.ndarray) -> bool:
-        """While Jarvis talks: if the OWNER starts speaking, stop talking and listen. True if it took over."""
-        if not (core.feature("barge_in") and speaker.speaking.is_set() and vp.enrolled()):
+    def interruption(self, audio: np.ndarray, final: bool) -> bool:
+        """You spoke while he was talking. True if he stopped for you."""
+        if not core.feature("barge_in"):
             return False
-        self.barge.append(chunk)
-        voiced = sum(self.speech_prob(c) >= self.SPEECH_ON for c in list(self.barge)[-8:])
-        if voiced < 5 or time.time() - self.barge_checked < 0.25:    # ~0.4 s of speech, check up to 4×/s
+        text, sure = spot(audio)
+        norm = core.normalize(text, "ru")
+        if not norm or sure < -1.1 or own_words(text) >= 0.6:
+            speaker.gain = 1.0
             return False
-        self.barge_checked = time.time()
-        audio = np.concatenate(list(self.barge)[-10:])               # the last 0.8 s
-        user = vp.user_score(audio)
-        own = vp.tts_score(audio, cfg("voice", "piper_voice_ru", "dmitri")) if cfg("voice", "tts_engine_ru", "piper") == "piper" else None
-        # a shorter clip is less certain: ask for a clearer win over Jarvis's own voice
-        need = vp.STRICT + 0.08 if own is None else vp.LENIENT + 0.08
-        if user is None or user < need or (own is not None and user < own + 0.2):
-            return False
-        log.info("Barge-in: owner %.2f vs Jarvis's voice %s — stop talking", user, f"{own:.2f}" if own is not None else "?")
-        speaker.stop()
-        set_status("recording")
-        audio = self.record_command(prefix=list(self.barge), silence=0.8)
-        if audio is None:
-            set_status("listening")
+        idx = find_name(" ".join(re.findall(r"[\w'ʻ’-]+", text)))
+        if _HUSH_START.match(norm) and self.owner(audio, "hush", need=0.12):
+            log.info("Interrupted by %r", text)
+            self.cancel()
+            self.set_mode("idle")
             return True
-        set_status("thinking")
-        text, lang, reliable = transcribe(audio, accurate=True)
-        words = core.normalize(text or "", "ru").split()
-        if not text or not reliable or (len(words) <= 3 and all(re.fullmatch(_HUSH, w) for w in words)):
-            set_status("listening")      # "стоп", "хватит", "понял" — just be quiet
+        if idx is not None and sure >= -0.8 and self.owner(audio, "name over speech"):
+            log.info("Interrupted by name: %r", text)
+            self.called()
+            if final:                       # the whole phrase is already here
+                self.run_async(self.hear_command, audio, True)
+            else:
+                self.woken = True
             return True
-        core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": "голос"})
-        self.process(text, lang)
-        self.flush()
-        return True
+        # any other words: only when we know your voice, and it is clearly you
+        if vp.enrolled() and len(audio) >= SAMPLE_RATE and self.owner(audio, "over speech", need=0.36):
+            log.info("Interrupted: %r", text)
+            self.cancel()
+            self.set_mode("command", 6)
+            if final:
+                self.run_async(self.hear_command, audio, False)
+            return True
+        speaker.gain = 1.0
+        return False
 
+    def phrase(self, audio: np.ndarray, woken: bool, over_speech: bool, too_long: bool) -> None:
+        dur = len(audio) / SAMPLE_RATE
+        if self.mode == "command" or woken:
+            if woken and dur < 2.6:                # just «Эй, Джарвис»: answer at once, without the cloud
+                text, sure = spot(audio)
+                words = re.findall(r"[\w'ʻ’-]+", text)
+                idx = find_name(" ".join(words))
+                if idx is not None and sure >= self.SURE and len("".join(words[idx + 1:])) < 3:
+                    self.greet()
+                    return
+            self.run_async(self.hear_command, audio, woken, over_speech)
+            return
+        if self.mode == "answer":
+            if not self.owner(audio, "follow-up", need=0.18):     # e.g. TV or a friend answered instead of you
+                return
+            if speaker.speaking.is_set():                          # answered before he finished the question
+                text, _ = spot(audio)
+                if not text or own_words(text) >= 0.6:
+                    return
+                speaker.stop()
+            self.run_async(self.hear_command, audio, False)
+            return
+        if speaker.speaking.is_set():
+            self.interruption(audio, final=True)
+            return
+        if over_speech and dur < 1.0:
+            return
+        # idle: is it «Джарвис, …»?
+        if too_long or dur < 0.4 or not core.feature("name_listening") or not cfg("cloud", "names_in_speech", True) or (
+                GAME["on"] and not cfg("performance", "names_in_games", True)):
+            return
+        text, sure = spot(audio)
+        words = re.findall(r"[\w'ʻ’-]+", text)
+        idx = find_name(" ".join(words))
+        if self.thinking and _HUSH_START.match(core.normalize(text, "ru")) and sure >= -0.8 and self.owner(audio, "hush", need=0.12):
+            log.info("Cancelled while thinking by %r", text)
+            self.cancel()
+            self.set_mode("idle")
+            return
+        if idx is None:
+            return
+        log.info("Name heard (%.2f): %s", sure, text)
+        if sure < -1.1 or not self.owner(audio, "name"):
+            return
+        if sure >= self.SURE and len("".join(words[idx + 1:])) < 3:     # just the name, clearly: don't wait for the cloud
+            self.called()
+            self.greet()
+            return
+        threading.Thread(target=self.confirm_name, args=(audio,), daemon=True, name="confirm-name").start()
+
+    def confirm_name(self, audio: np.ndarray) -> None:
+        """The local model isn't sure: the cloud must hear the name too. Until then nothing is interrupted."""
+        try:          # no hint: on unclear sound Whisper repeats its hint as if you had said it
+            res = _transcribe_cloud(audio, True, "ru", hint=False) if cloud.stt_enabled() else transcribe(audio, accurate=True)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Name check failed: %s", e)
+            return
+        if find_name(" ".join(re.findall(r"[\w'ʻ’-]+", res[0]))) is None:
+            log.info("Name not confirmed by the cloud (%r) — ignored", res[0])
+            return
+        self.depth, self.retry = 0, True
+        sfx("wake", wait=False)
+        self.run_async(self.hear_command, audio, True, False, res)
+
+    # -- the slow part (cloud) runs beside the microphone ----------------------
+    def run_async(self, fn, *args) -> None:
+        self.cancel()
+        gen = self.gen
+        self.thinking = gen
+        mode = self.mode
+        self.mode = "idle"                     # from here on you can interrupt by name
+        self._status()
+
+        def go():
+            try:
+                fn(gen, mode, *args)
+            except Exception:  # noqa: BLE001
+                log.exception("voice request failed")
+            finally:
+                if self.thinking == gen:
+                    self.thinking = 0
+                if self.gen == gen and self.mode == "idle":
+                    self.set_mode("idle")
+                self._status()
+        threading.Thread(target=go, daemon=True, name="voice-request").start()
+
+    def hear_command(self, gen: int, mode: str, audio: np.ndarray, woken: bool, over_speech: bool = False, res=None) -> None:
+        text, lang, reliable = res or transcribe(audio, accurate=True)
+        if gen != self.gen:
+            return
+        if over_speech and not woken and own_words(text) >= 0.6:      # his own «Слушаю, сэр» came back
+            self.set_mode("command", 6)
+            return
+        words = re.findall(r"[^\s]+", text)
+        idx = find_name(" ".join(re.sub(r"[^\w'ʻ’-]", "", w) for w in words)) if words else None
+        rest = " ".join(words[idx + 1:]).strip(" ,.!?—-") if idx is not None else text
+        if idx is not None and len(rest) < 3:          # only the name
+            self.greet()
+            return
+        if not text or not reliable or not re.search(r"\w", text):
+            if mode == "answer":
+                core.PENDING.clear()
+            elif woken and not text:
+                self.greet()
+            elif self.retry:
+                self.retry = False
+                self.set_mode("command", LISTEN_SECONDS)
+                speaker.say("Не расслышал, повторите.", lang or "ru")
+            return
+        core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": "голос"})
+        self.process(rest, lang, gen)
+
+    def process(self, text: str, lang: str, gen: int | None = None) -> None:
+        gen = self.gen if gen is None else gen
+        if _DICTATE_START.search(core.normalize(text, lang)):
+            self.todo.put(lambda: self.dictate(lang))
+            return
+        set_status("thinking")
+        core.FOLLOWUP.clear()
+        handle(text, lang, "голос", speak=True, echo=False, alive=lambda: gen == self.gen)
+        if gen != self.gen:
+            return
+        if core.FOLLOWUP.is_set():       # he asked something: the next phrase is the answer (you may answer early)
+            core.FOLLOWUP.clear()
+            allowed = core.PENDING or core.feature("conversation")
+            if allowed and self.depth < int(cfg("assistant", "conversation_turns", 4 if core.mode() == "friend" else 2)):
+                self.depth += 1
+                self.set_mode("answer", LISTEN_SECONDS)
+
+    # -- learning your voice ---------------------------------------------------
     def enroll_voice(self) -> None:
         """«Запомни мой голос»: ~20 s of the owner's speech -> voiceprint."""
         need, limit = 20.0, 75.0
@@ -963,154 +1255,6 @@ class Listener:
         core.emit({"type": "message", "role": "jarvis", "text": msg, "lang": "ru", "source": "голос"})
         speaker.say(msg, "ru")
         set_status("listening")
-
-    def check_names(self, audio: np.ndarray) -> None:
-        text, lang, reliable = transcribe(audio, accurate=False)
-        if not text:
-            return
-        words = re.findall(r"[\w'ʻ’-]+", text)
-        idx = find_name(" ".join(words))
-        if idx is None:
-            return
-        log.info("Name heard in [%s]: %s", lang, text)
-        if not self.owner(audio, "name"):
-            return
-        duck_start()
-        try:
-            self._after_name(audio, words, idx)
-        finally:
-            duck_end_later()
-
-    def _after_name(self, audio: np.ndarray, words: list[str], idx: int) -> None:
-        if cloud.stt_enabled() and cfg("cloud", "local_spotting", True):
-            text, lang, reliable = transcribe(audio, accurate=True)
-            words2 = re.findall(r"[\w'ʻ’-]+", text)
-            idx2 = find_name(" ".join(words2))
-            if idx2 is None:
-                log.info("Name not confirmed by the cloud (%r) — ignored", text)
-                return
-            rest = " ".join(words2[idx2 + 1:])
-            if not reliable or len(rest) < 3:
-                self._on_wake()          # just the name: answer «Слушаю» and listen
-                return
-            core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": "голос"})
-            self.process(rest, lang)
-            self.wake.reset()
-            self.flush()
-            return
-        rest_words = words[idx + 1:]
-        if len("".join(rest_words)) >= 3:
-            # it's addressed to Jarvis: transcribe again, carefully, in the detected language
-            text, lang, reliable = transcribe(audio, accurate=True)
-            words2 = re.findall(r"[\w'ʻ’-]+", text)
-            idx2 = find_name(" ".join(words2))
-            rest = " ".join(words2[idx2 + 1:]) if idx2 is not None else " ".join(rest_words)
-            if not reliable or len(rest) < 3:
-                self.on_wake()
-                return
-            core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": "голос"})
-            self.process(rest, lang)
-            self.wake.reset()
-            self.flush()
-        else:
-            self.on_wake()
-
-    def followup(self, depth: int) -> None:
-        """Listen for an answer to Jarvis's question (no wake word needed)."""
-        set_status("recording")
-        sfx("followup", fallback=(1046, 70))
-        audio = self.record_command(start_timeout=6.0)
-        if audio is None:
-            core.PENDING.clear()
-            set_status("listening")
-            return
-        if not self.owner(audio, "follow-up"):     # e.g. TV or a friend answered instead of you
-            set_status("listening")
-            return
-        text, lang, reliable = transcribe(audio, accurate=True)
-        if not text or not reliable:
-            set_status("listening")
-            return
-        core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": "голос"})
-        self.process(text, lang, depth)
-
-    def _already_talking(self, window: float = 0.6) -> list[np.ndarray] | None:
-        """Listen briefly: if you're already saying the command, return that audio (so we don't talk over you)."""
-        chunks, voiced, end = [], 0, time.time() + window
-        while time.time() < end:
-            try:
-                c = self.agc(self.frames.get(timeout=0.2))
-            except queue.Empty:
-                continue
-            chunks.append(c)
-            voiced = voiced + 1 if self.speech_prob(c) >= self.SPEECH_ON else 0
-            if voiced >= 2:
-                return chunks
-        return None
-
-    def on_wake(self, retry: bool = True, keep_audio: bool = True) -> None:
-        duck_start()           # music and video get quiet while we talk
-        try:
-            self._on_wake(retry, keep_audio)
-        finally:
-            duck_end_later()
-
-    def _on_wake(self, retry: bool = True, keep_audio: bool = True) -> None:
-        speaker.stop()
-        set_status("recording")
-        head = self._already_talking() if keep_audio else None
-        macros = _plugin("macros")
-        if head is None and core.feature("wake_reply") and core.mode() != "quiet":
-            # answer out loud, like a person: a ready clip from the voice pack (instant) or the synthesiser
-            if not (macros and macros.play("wake", wait=True)):
-                speaker.say(random.choice(WAKE_REPLIES.get(core.mode(), WAKE_REPLIES["polite"])), "ru")
-                speaker.wait(5)
-            self.flush()
-        else:
-            sfx("wake")
-        audio = self.record_command(prefix=head)
-        if audio is None:
-            sfx("cancel", fallback=(440, 110))
-            set_status("listening")
-            return
-        set_status("thinking")
-        if vp.enrolled():   # remember how sure we are it's you («Ты узнаёшь мой голос?»); never blocks a command
-            score = vp.user_score(audio)
-            if score is not None:
-                core.CONFIG["_last_voice_score"] = score
-        text, lang, reliable = transcribe(audio, accurate=True)
-        if not text or not reliable:
-            if retry:
-                speaker.say("Не расслышал, повторите, пожалуйста." if lang == "ru" else "Eshitmadim, qaytaring.", lang)
-                speaker.wait()
-                self.flush()
-                self._on_wake(retry=False, keep_audio=False)
-            else:
-                set_status("listening")
-            return
-        core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": "голос"})
-        self.process(text, lang)
-        self.wake.reset()
-        self.flush()
-
-    def process(self, text: str, lang: str, depth: int = 0) -> None:
-        if _DICTATE_START.search(core.normalize(text, lang)):
-            self.dictate(lang)
-            return
-        set_status("thinking")
-        handle(text, lang, "голос", speak=True, echo=False)
-        if core.RECORD_REQUEST.is_set():   # "запись" -> start the voice recorder right away
-            return
-        if core.FOLLOWUP.is_set():  # Jarvis asked a question: listen for the answer without the wake word
-            core.FOLLOWUP.clear()
-            if not (core.PENDING or core.feature("conversation")):
-                depth = 99   # "continue the conversation" is off in this mode (confirmations still work)
-            if depth < int(cfg("assistant", "conversation_turns", 4 if core.mode() == "friend" else 2)):
-                speaker.wait()
-                self.flush()
-                self.followup(depth + 1)
-        if not speaker.busy():
-            set_status("listening")
 
     # -- voice recorder ------------------------------------------------------
     def voice_record(self, lang: str) -> None:
@@ -1249,7 +1393,7 @@ def _record(event: dict) -> None:
 core.subscribe(_record)
 
 
-def handle(text: str, lang: str, source: str, speak: bool, echo: bool = True) -> str:
+def handle(text: str, lang: str, source: str, speak: bool, echo: bool = True, alive=lambda: True) -> str:
     if echo:
         core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": source})
     if core.normalize(text, lang) in _STOP_WORDS:
@@ -1258,6 +1402,9 @@ def handle(text: str, lang: str, source: str, speak: bool, echo: bool = True) ->
     t0 = time.time()
     reply = core.styled(core.route(text, lang, source, core.CONFIG), lang)
     log.info("Reply [%s] in %.2fs: %s", lang, time.time() - t0, reply)
+    if not alive():          # you interrupted while he was thinking
+        log.info("Reply dropped: interrupted")
+        speak = False
     if source != "голос":
         core.FOLLOWUP.clear()
     core.log_exchange(source, lang, text, reply)
@@ -1601,6 +1748,15 @@ def run_server() -> None:
             raise web.HTTPNotFound()
         return web.FileResponse(path)
 
+    async def goals_get(_r):
+        """Goals, repeating reminders and app limits with today's usage — for the panels in the window."""
+        today = core.now().strftime("%Y-%m-%d")
+        return web.json_response({
+            "goals": core.load_json(core.DATA / "goals.json", []), "repeats": core.load_json(core.DATA / "repeats.json", []),
+            "limits": core.load_json(core.DATA / "limits.json", []),
+            "usage": core.load_json(core.DATA / "limits_usage.json", {}).get(today, {}),
+        })
+
     async def macros_get(_r):
         m = _plugin("macros")
         return web.json_response({"items": m.load(), "types": m.ACTION_TYPES, "packs": m.packs(), "pack": m.active_pack()})
@@ -1696,7 +1852,7 @@ def run_server() -> None:
         return web.json_response({"enrolled": vp.enrolled()})
 
     async def stop_speaking(_r):
-        speaker.stop()
+        LISTENER.cancel() if LISTENER else speaker.stop()
         return web.json_response({"ok": True})
 
     async def tasks_add(r):
@@ -1878,7 +2034,7 @@ def run_server() -> None:
         web.get("/", index), web.get("/classic", to_index), web.get("/hud", to_index), web.get("/api/telemetry", telemetry_get),
         web.get("/api/v3", v3_get), web.post("/api/persona", persona_set), web.post("/api/keys", keys_set),
         web.post("/api/bg", bg_upload), web.delete("/api/bg", bg_delete), web.get("/media/{name}", media_file),
-        web.get("/api/macros", macros_get), web.post("/api/macros", macros_save),
+        web.get("/api/goals", goals_get), web.get("/api/macros", macros_get), web.post("/api/macros", macros_save),
         web.delete("/api/macros/{id}", macros_delete), web.post("/api/macros/{id}/run", macros_run),
         web.post("/api/pack", pack_set), web.post("/api/translate", translate), web.post("/api/translate/live", translate_live),
         web.get("/api/remote", remote_get), web.post("/api/remote", remote_set),

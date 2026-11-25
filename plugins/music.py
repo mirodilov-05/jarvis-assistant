@@ -86,28 +86,96 @@ _await: dict = {"until": 0.0}
 
 def _yandex_play(url: str, what: str) -> None:
     """Open Yandex Music in your browser and press its «Воспроизведение» button (like a person would)."""
+    _play_run["id"] += 1
+    run = _play_run["id"]
+
     def go():
+        import comtypes
+        try:
+            comtypes.CoInitialize()
+        except OSError:
+            pass
         try:
             import uiclick
+            old = [h for h in uiclick.windows_with_title(YANDEX_TITLE)]
+            for h in old:                               # something is already playing there: don't play two songs at once
+                try:
+                    st = uiclick.player(h)
+                    if st["playing"]:
+                        uiclick.press(st["bar"])
+                except Exception:  # noqa: BLE001
+                    pass
             os.startfile(url)
-            hwnd, t0 = None, time.time()
-            while time.time() - t0 < 15 and not hwnd:
-                time.sleep(0.8)
-                found = uiclick.windows_with_title(r"Яндекс Музык|Yandex Music")
-                hwnd = found[0] if found else None
-            if not hwnd:
-                core.speak("Открыл Яндекс Музыку, но окно не нашёл. Нажмите плей, сэр.", "ru")
-                return
-            bring_browser_to_front(0.1)
-            pressed = uiclick.click_named(hwnd, ["Воспроизведение", "Слушать", "Play"], timeout=15)
-            time.sleep(2.5)
-            if not pressed or not _playing():
-                core.log.info("Yandex Music: play button %s, playing=%s", pressed, _playing())
-                if not _playing():
-                    core.speak("Яндекс Музыку открыл, но звук не пошёл. Нажмите плей, сэр — может, нужно войти в аккаунт.", "ru")
+            ok, why = _press_until_playing(url, run)
+            core.log.info("Yandex Music «%s»: playing=%s (%s)", what, ok, why)
+            if not ok and run == _play_run["id"]:
+                core.speak(f"Яндекс Музыку открыл, но она не заиграла: {why}. Нажмите плей, сэр.", "ru")
         except Exception:  # noqa: BLE001
             core.log.exception("yandex music autoplay")
     threading.Thread(target=go, daemon=True, name="yandex-play").start()
+
+
+YANDEX_TITLE = r"Яндекс Музык|Yandex Music"
+_play_run: dict = {"id": 0}
+
+
+def _press_until_playing(url: str, run: int, timeout: float = 40.0) -> tuple[bool, str]:
+    """Press play on the page and CHECK that the player shows «Пауза»; press again if it doesn't.
+    One blind press is not enough: the page shows its buttons a few seconds before they start working."""
+    import uiclick
+    want = urllib.parse.unquote(urllib.parse.urlsplit(url).query)      # «text=…» of a search; empty for My Wave
+    why, end, presses, last_press, fronted, seen_at = "окно не нашёл", time.time() + timeout, 0, 0.0, False, 0.0
+    before: str | None = None                           # what was loaded before: the same track again is not the music you asked for
+    while time.time() < end:
+        time.sleep(0.7)
+        if run != _play_run["id"]:
+            return False, "отменено новой командой"
+        hwnd, st = None, None
+        for h in uiclick.windows_with_title(YANDEX_TITLE):
+            try:
+                addr = urllib.parse.unquote(uiclick.page_url(h))
+                if "music.yandex" in addr and want.replace("+", " ") in addr.replace("+", " "):
+                    hwnd, st = h, uiclick.player(h)
+                    break
+            except Exception:  # noqa: BLE001 - the page is being rebuilt, look again
+                continue
+        if not hwnd:
+            continue
+        if not fronted:
+            bring_browser_to_front(0.1)
+            fronted, seen_at = True, time.time()
+        if st["playing"] and presses:
+            time.sleep(1.5)                              # it must stay playing, and it must be new music
+            now_st = uiclick.player(hwnd)
+            if now_st["playing"] and (not want or now_st["track"] != before):
+                return True, f"нажатий: {presses}, трек: {now_st['track'] or '?'}"
+            if not now_st["playing"]:
+                continue
+            why = "включился прошлый трек, а не то, что вы просили"
+        if time.time() - last_press < 3.5:
+            continue                                     # give the press time to work
+        # The player bar appears 1–2 s before the results and would resume the OLD queue — never press it for a search.
+        if want:
+            target = st["items"][0] if len(st["items"]) >= 1 and st["bar"] else None
+            missing = "по запросу ничего не нашлось"
+        else:                                            # My Wave: its own button if another queue is loaded, else resume
+            target = st["wave"] or (st["bar"] if st["items"] and time.time() - seen_at > 3 else None)
+            missing = "на странице нет кнопки «Моя волна»"
+        if not target or time.time() - seen_at < 2.0:
+            why = missing
+            continue
+        if before is None:
+            before = st["track"]
+        why = "кнопку нажал, но плеер не включился — возможно, нужен вход в аккаунт"
+        try:
+            uiclick.press(target)
+            presses, last_press = presses + 1, time.time()
+        except Exception:  # noqa: BLE001
+            continue
+        if presses >= 5:
+            time.sleep(4)
+            break
+    return False, why
 
 
 def play(query: str = "", ask: bool = False) -> str:
@@ -212,7 +280,22 @@ def _playing() -> bool:
 def pause(ctx: Ctx) -> str:
     import keyboard
     resume = bool(re.search(r"продолж|играй|сними с паузы|верни", ctx.norm))
-    playing = _playing()
+    _play_run["id"] += 1                     # a start that is still in progress must not turn the music on after «стоп»
+    try:                                     # Yandex Music in the browser: press its own button
+        import uiclick
+        import comtypes
+        try:
+            comtypes.CoInitialize()
+        except OSError:
+            pass
+        for h in uiclick.windows_with_title(YANDEX_TITLE):
+            st = uiclick.player(h)
+            if st["bar"] and st["playing"] != resume:
+                uiclick.press(st["bar"])
+                return "Продолжаю." if resume else "Пауза."
+    except Exception:  # noqa: BLE001
+        core.log.exception("yandex pause")
+    playing = any(_playing() or time.sleep(0.25) for _ in range(3))      # one quiet moment is not silence
     if resume and playing:
         return "Уже играет, сэр."
     if not resume and not playing:

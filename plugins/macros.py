@@ -43,7 +43,11 @@ ACTION_TYPES = {
     "say": "Сказать фразу",
     "command": "Любая команда Джарвису",
     "wait": "Пауза, секунд",
+    "snap": "Окно текущей программы: left / right / max / min",
 }
+
+# window placement for «snap» steps: Windows' own shortcuts on the foreground window
+_SNAP_KEYS = {"left": "windows+left", "right": "windows+right", "max": "windows+up", "min": "windows+down"}
 
 
 def load() -> list[dict]:
@@ -128,6 +132,9 @@ def run_action(a: dict) -> str:
         return core.route(v, "ru", "макрос", core.CONFIG) or ""
     elif t == "wait":
         time.sleep(min(30.0, float(v or 1)))
+    elif t == "snap":
+        import keyboard
+        keyboard.send(_SNAP_KEYS.get(v.lower(), "windows+up"))
     return ""
 
 

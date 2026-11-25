@@ -27,8 +27,9 @@ _sess = None
 _cache: dict = {}
 
 # Cosine thresholds (calibrated, see README): same speaker ≈ 0.55-0.85, other people ≈ -0.1-0.35.
-LENIENT = 0.40   # normal use: rather answer you than miss you (Piper test: owner 0.72-0.88, others <= 0.42)
-STRICT = 0.50    # in games: friends on voice chat must not trigger Jarvis
+# Real log of 24 Nov: the owner's «Эй, Джарвис» 0.31 (over music) … 0.67; noise and other voices 0.02 … 0.17.
+LENIENT = 0.25   # normal use: rather answer you than miss you
+STRICT = 0.38    # in games: friends on voice chat must not trigger Jarvis
 
 
 # ---------------------------------------------------------------------------

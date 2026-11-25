@@ -155,7 +155,7 @@ def playing_apps() -> list[str]:
     for s in _sessions():
         try:
             meter = s._ctl.QueryInterface(IAudioMeterInformation)
-            if meter.GetPeakValue() > 0.01:
+            if meter.GetPeakValue() > 0.001:          # music fades in: the first seconds are very quiet
                 out.append(s.Process.name().lower())
         except Exception:  # noqa: BLE001
             continue

@@ -70,3 +70,54 @@ def click_named(hwnd: int, names: list[str], timeout: float = 12.0) -> str | Non
                         return name
         time.sleep(0.7)
     return None
+
+
+def page_url(hwnd: int) -> str:
+    """Address of the page shown in a Chromium window (Yandex Browser, Edge, Chrome)."""
+    uia, m = _api()
+    doc = uia.ElementFromHandle(hwnd).FindFirst(
+        m.TreeScope_Descendants, uia.CreatePropertyCondition(m.UIA_ControlTypePropertyId, m.UIA_DocumentControlTypeId))
+    if not doc:
+        return ""
+    try:
+        return doc.GetCurrentPattern(m.UIA_ValuePatternId).QueryInterface(m.IUIAutomationValuePattern).CurrentValue or ""
+    except Exception:  # noqa: BLE001 - the page is still loading
+        return ""
+
+
+def press(el) -> None:
+    _, m = _api()
+    el.GetCurrentPattern(m.UIA_InvokePatternId).QueryInterface(m.IUIAutomationInvokePattern).Invoke()
+
+
+def player(hwnd: int) -> dict:
+    """Yandex Music in this window: {"bar": the player's play/pause button or None, "playing": bool,
+    "items": play buttons on the page itself, "wave": the «…включить Мою волну» button or None,
+    "track": «artist — track» loaded in the player}."""
+    uia, m = _api()
+    root = uia.ElementFromHandle(hwnd)
+    els = root.FindAll(m.TreeScope_Descendants,
+                       uia.CreatePropertyCondition(m.UIA_ControlTypePropertyId, m.UIA_ButtonControlTypeId))
+    out: dict = {"bar": None, "playing": False, "items": [], "wave": None, "track": ""}
+    prev = ""
+    for i in range(els.Length):
+        e = els.GetElement(i)
+        name = e.CurrentName or ""
+        if prev in ("Предыдущая песня", "Previous track", "Previous song"):
+            out["bar"] = e
+            out["playing"] = name in ("Пауза", "Pause")
+            break
+        if name in ("Воспроизведение", "Слушать", "Play"):
+            out["items"].append(e)
+        elif "включить" in name and "волну" in name:      # «Сбросить <очередь> и включить Мою волну»
+            out["wave"] = e
+        prev = name
+    links = root.FindAll(m.TreeScope_Descendants,
+                         uia.CreatePropertyCondition(m.UIA_ControlTypePropertyId, m.UIA_HyperlinkControlTypeId))
+    for i in range(links.Length):              # the player is at the end of the page: its track and artist come last
+        n = (links.GetElement(i).CurrentName or "").strip()
+        if n.startswith("Трек "):
+            out["track"] = n[5:].strip()
+        elif n.startswith("Артист ") and out["track"] and " — " not in out["track"]:
+            out["track"] = n[7:].strip() + " — " + out["track"]
+    return out

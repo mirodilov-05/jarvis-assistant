@@ -104,19 +104,56 @@ def lock(ctx: Ctx) -> str:
 @skill(
     "system.shutdown",
     title={"ru": "Выключить или перезагрузить компьютер (через минуту)", "uz": "Kompyuterni o'chirish yoki qayta yoqish"},
-    patterns={"ru": [r"(выключи|перезагрузи|перезапусти) (компьютер|ноутбук|комп)"],
+    patterns={"ru": [r"^(?:джарвис )?(?:я сказал |это не программа )?(?:выключи|выключить|перезагрузи|перезапусти) (?:мой |этот |сразу |сейчас )*(?:компьютер|ноутбук|ноут|комп|пк)"
+                     r"(?: пожалуйста| сразу| сейчас| я говорю| я сказал)*$"],
               "uz": [r"(kompyuter|noutbuk)\w* (ochir|qayta yoq|qayta ishga tushir)\w*"]},
     examples={"ru": ["Выключи компьютер"], "uz": ["Kompyuterni o'chir"]},
     priority=9,
 )
 def shutdown(ctx: Ctx) -> str:
     restart = any(w in ctx.norm for w in ("перезагру", "перезапус", "qayta"))
-    subprocess.run(["shutdown", "/r" if restart else "/s", "/t", "60"], creationflags=NO_WINDOW)
-    if restart:
-        return ctx.t("Перезагружу компьютер через минуту. Чтобы отменить, скажите: отмени выключение.",
-                     "Bir daqiqadan keyin qayta yoqiladi. Bekor qilish uchun: o'chirishni bekor qil.")
-    return ctx.t("Выключу компьютер через минуту. Чтобы отменить, скажите: отмени выключение.",
-                 "Bir daqiqadan keyin o'chiriladi. Bekor qilish uchun: o'chirishni bekor qil.")
+
+    def _do() -> str:
+        subprocess.run(["shutdown", "/r" if restart else "/s", "/t", "60"], creationflags=NO_WINDOW)
+        if restart:
+            return ctx.t("Перезагружу компьютер через минуту. Чтобы отменить, скажите: отмени выключение.",
+                         "Bir daqiqadan keyin qayta yoqiladi. Bekor qilish uchun: o'chirishni bekor qil.")
+        return ctx.t("Выключу компьютер через минуту. Чтобы отменить, скажите: отмени выключение.",
+                     "Bir daqiqadan keyin o'chiriladi. Bekor qilish uchun: o'chirishni bekor qil.")
+
+    # never power off on one phrase: the user must say «да»
+    import core
+    return core.ask_confirm(ctx, ctx.t(
+        "Перезагрузить компьютер через минуту?" if restart else "Выключить компьютер через минуту?",
+        "Kompyuterni qayta yoqaymi?" if restart else "Kompyuterni o'chiraymi?"), _do)
+
+
+@skill(
+    "system.sleep",
+    title={"ru": "Спящий режим и гибернация (после «да»)"},
+    patterns={"ru": [r"^(?:джарвис )?(?:(?:переведи|отправь|поставь|включи|перейди|уйди) )?(?:(?:компьютер|ноутбук|ноут|комп|пк) )?(?:в )?"
+                     r"(?:спящ\w+ режим\w*|режим сна|сон|гибернаци\w*)$",
+                     r"^(?:джарвис )?(?:усни|усыпи (?:компьютер|ноутбук|ноут|комп|пк))$"]},
+    examples={"ru": ["Спящий режим", "Переведи компьютер в спящий режим"]},
+    priority=9,
+)
+def sleep(ctx: Ctx) -> str:
+    import core
+
+    hibernate = "гиберн" in ctx.norm
+
+    def _go() -> None:
+        if hibernate:
+            subprocess.run(["shutdown", "/h"], creationflags=NO_WINDOW)
+        else:      # this laptop has S0 standby, no S3: it falls asleep when the display is switched off
+            ctypes.windll.user32.PostMessageW(0xFFFF, 0x0112, 0xF170, 2)      # WM_SYSCOMMAND, SC_MONITORPOWER, off
+
+    def _do() -> str:
+        import threading
+        threading.Timer(4, _go).start()      # say it first, then sleep
+        return "Ухожу в гибернацию." if hibernate else "Ухожу в спящий режим."
+
+    return core.ask_confirm(ctx, "Перевести компьютер в гибернацию?" if hibernate else "Перевести компьютер в спящий режим?", _do)
 
 
 @skill(

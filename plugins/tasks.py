@@ -272,7 +272,8 @@ def tasks_delete(ctx: Ctx):
     "tasks.done",
     title={"ru": "Отметить дело выполненным", "uz": "Vazifani bajarilgan deb belgilash"},
     patterns={
-        "ru": [r"(?:выполнил|выполнила|сделал|сделала|отметь|вычеркни|закрой|готово|закончил|закончила)(?: как выполненное)?(?: дело| задачу)?(?: номер)? " + core.NUM_RE],
+        "ru": [r"(?:выполнил|выполнила|сделал|сделала|отметь|вычеркни|готово|закончил|закончила)(?: как выполненное)?(?: дело| задачу)?(?: номер)? " + core.NUM_RE + r"(?: дело| задачу)?$",
+               r"закрой (?:дело|задачу)(?: номер)? " + core.NUM_RE],
         "uz": [
             core.NUM_RE + r"(?: chi| nchi| inchi)? (?:vazifa|ish)\w* (?:bajarildi|bajardim|tugadi|tayyor)",
             r"(?:vazifa|ish) (?:raqam )?" + core.NUM_RE + r" (?:bajarildi|bajardim|tugadi|tayyor)",

@@ -653,6 +653,9 @@ def _handle_pending(text: str, lang: str) -> Optional[str]:
         PENDING.clear()
         return None
     norm = normalize(text, "uz" if detect_lang(text) == "uz" else "ru")
+    if re.search(r"\b(нет|не надо|не нужно|отмена|отмени|не выключай)\b", norm):
+        PENDING.clear()
+        return "Хорошо, отменил."
     if _YES.search(norm) or _YES.search(normalize(text, "uz")):
         action = PENDING["action"]
         PENDING.clear()
@@ -680,6 +683,46 @@ _NO_SMART = {"system.shutdown", "tasks.clear", "tasks.delete", "notes.delete", "
 _POLITE = re.compile(r"(?:,\s*)?\b(?:пожалуйста|плиз|please|будь добр|будь другом)\b,?", re.I)
 
 
+LAST_QUESTION: dict = {"user": "", "question": "", "source": "", "at": None}   # the brain's own open question
+_SHORT_YES = re.compile(r"^(да|ага|угу|давай|да давай|ок|окей|хорошо|конечно|перв\w{2,3}|втор\w{2,3}|трет\w{2,3})$")
+_SHORT_NO = re.compile(r"^(нет|не|не надо|не нужно|отмена|да нет)$")
+
+
+_MISHEARD = [
+    (re.compile(r"^(?:атпой|аткрой|открой|открою|открыл|отрой|фаткоя|фоткай|от крой)(?=[\s,])", re.I), "открой"),
+    (re.compile(r"^(?:включу|ключи|включай)(?=[\s,])", re.I), "включи"),
+    (re.compile(r"^(?:выключу|выключай|и ключи|вы ключи)(?=[\s,])", re.I), "выключи"),
+    (re.compile(r"^(?:закрою|закрыл|за крой)(?=[\s,])", re.I), "закрой"),
+    (re.compile(r"^(?:топ|стоб)[.,]?\s+(?=музык)", re.I), "стоп "),
+    (re.compile(r"\bстоп[.,]\s+музык\w*", re.I), "стоп музыка"),
+    (re.compile(r"\b(?:модбук|нотбук|ноутбоок|ноудбук)(?=\w{0,2}\b)", re.I), "ноутбук"),
+    # «ноту / нота / ноты» is the laptop when you talk about power, brightness or volume
+    (re.compile(r"(?<=\s)(?:ноут(?:а|у|е|ок|ка)?|нот[ауые]|ноток)(?=[.,!?\s]|$)", re.I), "ноутбук"),
+    (re.compile(r"\b(?:анекс|янекс|яндес|индекс)(?=\s+музык)", re.I), "яндекс"),
+]
+_ABOUT_PC = re.compile(r"выключ|включ|перезагруз|яркост|громкост|звук|экран|усыпи|спящ|заблокир", re.I)
+
+
+def fix_hearing(text: str) -> str:
+    """Put right the words that speech recognition regularly gets wrong."""
+    out = text.strip()
+    for rx, good in _MISHEARD:
+        if "нот[" in rx.pattern and not _ABOUT_PC.search(out):
+            continue
+        out = rx.sub(good, out)
+    if out != text.strip():
+        log.info("Heard %r -> %r", text, out)
+    return out
+
+
+def _ask_brain(text: str, source: str) -> Optional[str]:
+    import agent
+    reply = agent.run(text, source)
+    if reply and reply.rstrip().endswith("?") and not PENDING:
+        LAST_QUESTION.update(user=text, question=reply.strip()[-300:], source=source, at=now())
+    return reply
+
+
 def route(text: str, lang: str, source: str, config: dict) -> str:
     text = re.sub(r"\s{2,}", " ", _POLITE.sub("", text)).strip(" ,")   # «открой, пожалуйста, телеграм» = «открой телеграм»
     if not text:
@@ -687,7 +730,19 @@ def route(text: str, lang: str, source: str, config: dict) -> str:
     pending_reply = _handle_pending(text, lang)
     if pending_reply:
         return pending_reply
+    if source == "голос":
+        text = fix_hearing(text)
     import agent
+    # «да» / «нет» to a question the BRAIN asked (skills that ask, like music, wait for their own answer).
+    # The answer goes straight to the brain: pasted into the request it would trigger a skill even on «нет».
+    q = dict(LAST_QUESTION)
+    LAST_QUESTION.update(question="", at=None)          # any next phrase closes the question
+    if q["question"] and q["source"] == source and now() - q["at"] < dt.timedelta(minutes=3):
+        short = normalize(text, lang).strip(" .!?,")
+        if _SHORT_NO.match(short):
+            return "Хорошо, не делаю." if lang == "ru" else "Xo'p, qilmayman."
+        if _SHORT_YES.match(short):
+            return _ask_brain(f"{q['user']} (на твой вопрос «{q['question']}» отвечаю: {text})", source) or "Не понял, повторите, пожалуйста."
     # several actions in one phrase: do them one by one, each through the reliable path
     parts = agent.split_chain(text)
     if len(parts) > 1 and not _rerouting.get("chain"):
@@ -725,7 +780,7 @@ def route(text: str, lang: str, source: str, config: dict) -> str:
         return "Не понял, повторите, пожалуйста." if lang == "ru" else "Tushunmadim, qaytaring."
     # Anything else: the brain decides — call tools (any wording, chains) or just talk.
     if feature("smart_understanding"):
-        reply = agent.run(text, source)
+        reply = _ask_brain(text, source)
         if reply is not None:
             return reply
     fallback = next((s for s in SKILLS if s.name == "llm.chat"), None)

@@ -326,6 +326,8 @@ def close_app(ctx: Ctx):
         finder = sys.modules.get("jarvis_plugin_appfinder")
         exe = finder.find_running(name) if finder else None
     if not exe:
+        if ctx.lang == "ru" and core.feature("smart_understanding") and not name.startswith(("программ", "приложен")):
+            return None
         return ctx.t(f"Не нашёл запущенную программу «{name}».", f"«{name}» ishlab turgan dastur topilmadi.")
     subprocess.run(["taskkill", "/IM", exe], capture_output=True, creationflags=NO_WINDOW)
     return ctx.t(f"Закрываю {exe}.", f"{exe} yopilmoqda.")

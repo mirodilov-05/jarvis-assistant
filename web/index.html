@@ -2,720 +2,742 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Джарвис</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Jarvis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <style>
-:root {
-  --accent: 79, 209, 255;          /* chosen neon (rgb) — set by JS from ⚙ Внешний вид */
-  --c: var(--accent);              /* current state colour */
-  --glass: .72;                    /* panel opacity */
-  --bg: #03060b; --text: #d6ecff; --muted: #7b93a8; --line: rgba(140, 200, 255, .14);
-  --amber: #ffb547; --red: #ff5468; --green: #3ee6a1;
-  --mono: "Cascadia Mono", Consolas, monospace; --r: 14px;
+/* ============ DESIGN TOKENS ============ */
+:root{
+  /* colour: one accent, semantic states, neutral surfaces */
+  --accent:#7aa6ff; --accent-ink:#06142e; --accent-soft:rgba(122,166,255,.14); --accent-line:rgba(122,166,255,.42);
+  --success:#3fd69b; --warning:#f2b150; --danger:#ff6b7f;
+  --bg:#0a0d12; --surface:#11151c; --surface-2:#171c25; --surface-3:#1e2530;
+  --border:#263041; --border-2:#334055;
+  --text:#eef2f8; --text-2:#a7b2c2; --text-3:#6f7c8f;
+  /* scale */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+  --r1:8px; --r2:12px; --r3:16px; --r-pill:999px;
+  --t-xs:12px; --t-sm:13px; --t-md:14px; --t-lg:16px; --t-xl:20px; --t-2xl:28px;
+  --shadow-1:0 1px 2px rgba(0,0,0,.35); --shadow-2:0 12px 32px -12px rgba(0,0,0,.6);
+  --ease:cubic-bezier(.2,.7,.2,1); --dur:.18s;
+  --sans:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  color-scheme:dark;
 }
-* { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 15px/1.45 "Segoe UI", system-ui, sans-serif; overflow: hidden; }
-button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
-input, select, textarea { font: inherit; color: var(--text); background: rgba(18, 30, 44, .9); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; width: 100%; }
-input:focus, select:focus, textarea:focus { outline: none; border-color: rgba(var(--accent), .6); }
-:focus-visible { outline: 2px solid rgba(var(--accent), .7); outline-offset: 2px; }
-.muted { color: var(--muted); }
-.panel { background: rgba(10, 18, 28, var(--glass)); border: 1px solid var(--line); border-radius: var(--r); backdrop-filter: blur(14px); }
+[data-theme="light"]{
+  --accent:#2f6fea; --accent-ink:#ffffff; --accent-soft:rgba(47,111,234,.1); --accent-line:rgba(47,111,234,.4);
+  --success:#17a673; --warning:#c98212; --danger:#d93b52;
+  --bg:#f5f7fb; --surface:#ffffff; --surface-2:#f0f3f8; --surface-3:#e7ecf4;
+  --border:#dde3ee; --border-2:#c9d2e0;
+  --text:#101827; --text-2:#4d5a6e; --text-3:#7d8a9d; --shadow-1:0 1px 2px rgba(16,24,39,.06); --shadow-2:0 12px 32px -14px rgba(16,24,39,.22);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]){
+  --accent:#2f6fea; --accent-ink:#ffffff; --accent-soft:rgba(47,111,234,.1); --accent-line:rgba(47,111,234,.4);
+  --success:#17a673; --warning:#c98212; --danger:#d93b52;
+  --bg:#f5f7fb; --surface:#ffffff; --surface-2:#f0f3f8; --surface-3:#e7ecf4;
+  --border:#dde3ee; --border-2:#c9d2e0;
+  --text:#101827; --text-2:#4d5a6e; --text-3:#7d8a9d; --shadow-1:0 1px 2px rgba(16,24,39,.06); --shadow-2:0 12px 32px -14px rgba(16,24,39,.22);
+  color-scheme:light;
+} }
 
-/* ---- background layer ---- */
-#bg { position: fixed; inset: 0; z-index: 0; overflow: hidden;
-  background: radial-gradient(ellipse at 50% 38%, rgba(var(--c), .12), transparent 58%),
-              radial-gradient(ellipse at 15% 90%, rgba(var(--accent), .06), transparent 50%), linear-gradient(160deg, #060b12, #020407 70%); }
-#bg video, #bg img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-#bg .dim { position: absolute; inset: 0; background: #000; opacity: .55; }
-#bg::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(0deg, rgba(255,255,255,.012) 0 1px, transparent 1px 3px); }
+/* ============ BASE ============ */
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:400 var(--t-md)/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+body{overflow:hidden}
+h1,h2,h3,h4{margin:0;font-weight:600;letter-spacing:-.01em}
+h1{font-size:var(--t-2xl);line-height:1.2}
+h2{font-size:var(--t-xl);line-height:1.3}
+h3{font-size:var(--t-lg);line-height:1.4}
+p{margin:0}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+input,select,textarea{font:inherit;color:var(--text);background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r1);height:40px;padding:0 var(--s3);width:100%;transition:border-color var(--dur),box-shadow var(--dur)}
+textarea{height:auto;padding:var(--s2) var(--s3);resize:vertical}
+input::placeholder,textarea::placeholder{color:var(--text-3)}
+input:hover,select:hover,textarea:hover{border-color:var(--text-3)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r1)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.muted{color:var(--text-2)} .faint{color:var(--text-3)} .small{font-size:var(--t-sm)} .xs{font-size:var(--t-xs)}
+.mono{font-family:var(--mono)}
+.row{display:flex;align-items:center;gap:var(--s3)}
+.col{display:flex;flex-direction:column;gap:var(--s3)}
+.grow{flex:1;min-width:0}
+.between{display:flex;align-items:center;justify-content:space-between;gap:var(--s3)}
 
-/* ---- header ---- */
-header { position: fixed; top: 0; left: 0; right: 0; z-index: 6; display: flex; align-items: center; gap: 12px; padding: 12px 16px; }
-.brand { font: 600 12px var(--mono); letter-spacing: .32em; color: rgb(var(--accent)); text-shadow: 0 0 12px rgba(var(--accent), .6); white-space: nowrap; }
-.pill { font: 600 11px var(--mono); letter-spacing: .08em; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
-.pill.ok { color: var(--green); border-color: rgba(62, 230, 161, .35); }
-.pill.warn { color: var(--amber); border-color: rgba(255, 181, 71, .35); }
-.pill.bad { color: var(--red); border-color: rgba(255, 84, 104, .35); }
-#personas { display: flex; gap: 4px; padding: 3px; border-radius: 999px; }
-#personas button { padding: 5px 12px; border-radius: 999px; font-size: 13px; color: var(--muted); }
-#personas button.on { background: rgb(var(--accent)); color: #021018; box-shadow: 0 0 16px rgba(var(--accent), .45); }
-#personas button:not(.on):hover { color: var(--text); }
-.spacer { flex: 1; }
-#tele { font: 11px var(--mono); color: var(--muted); white-space: nowrap; cursor: pointer; }
-#tele b { color: var(--text); font-weight: 600; }
-.tools { display: flex; gap: 2px; }
-.tools button { height: 34px; padding: 0 10px; border-radius: 10px; color: var(--muted); font-size: 13px; white-space: nowrap; }
-.tools button:hover { color: var(--text); background: rgba(255, 255, 255, .06); }
+/* ============ COMPONENTS ============ */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--s2);height:36px;padding:0 var(--s4);border-radius:var(--r1);font-weight:500;font-size:var(--t-md);white-space:nowrap;transition:background var(--dur),border-color var(--dur),transform var(--dur)}
+.btn:active{transform:scale(.98)}
+.btn-primary{background:var(--accent);color:var(--accent-ink)}
+.btn-primary:hover{filter:brightness(1.06)}
+.btn-secondary{background:var(--surface-2);color:var(--text);border:1px solid var(--border-2)}
+.btn-secondary:hover{background:var(--surface-3)}
+.btn-ghost{color:var(--text-2);height:32px;padding:0 var(--s3)}
+.btn-ghost:hover{background:var(--surface-2);color:var(--text)}
+.btn-danger{color:var(--danger);height:32px;padding:0 var(--s3)}
+.btn-danger:hover{background:rgba(255,107,127,.1)}
+.btn-icon{width:36px;padding:0}
+.btn:disabled{opacity:.5;pointer-events:none}
+.icon{width:20px;height:20px;flex-shrink:0}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r3);padding:var(--s5);box-shadow:var(--shadow-1)}
+.card-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--s4)}
+.card-title .eyebrow{font-size:var(--t-sm);font-weight:600;color:var(--text-2)}
+.eyebrow{font-size:var(--t-xs);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3)}
+.badge{display:inline-flex;align-items:center;gap:var(--s2);height:24px;padding:0 var(--s2);border-radius:var(--r-pill);font-size:var(--t-xs);font-weight:500;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border)}
+.badge i{width:6px;height:6px;border-radius:50%;background:currentColor}
+.badge.ok{color:var(--success)} .badge.warn{color:var(--warning)} .badge.bad{color:var(--danger)} .badge.accent{color:var(--accent)}
+.list{display:flex;flex-direction:column}
+.item{display:flex;align-items:center;gap:var(--s3);padding:var(--s3) 0;border-top:1px solid var(--border);min-height:52px}
+.item:first-child{border-top:0}
+.item .title{font-weight:500;overflow-wrap:anywhere}
+.item .meta{font-size:var(--t-sm);color:var(--text-3);margin-top:2px}
+.item .meta.over{color:var(--danger)}
+.item .end{display:flex;align-items:center;gap:var(--s2);flex-shrink:0}
+.check{appearance:none;-webkit-appearance:none;width:20px;height:20px;border-radius:6px;border:1.5px solid var(--border-2);background:var(--surface);display:grid;place-items:center;cursor:pointer;flex-shrink:0;margin:0;transition:all var(--dur)}
+.check:hover{border-color:var(--accent)}
+.check:checked{background:var(--accent);border-color:var(--accent)}
+.check:checked::after{content:"";width:5px;height:10px;border:solid var(--accent-ink);border-width:0 2px 2px 0;transform:rotate(45deg) translate(-1px,-1px)}
+.progress{height:6px;border-radius:var(--r-pill);background:var(--surface-3);overflow:hidden;margin-top:var(--s2)}
+.progress>span{display:block;height:100%;background:var(--accent);border-radius:inherit;transition:width .5s var(--ease)}
+.progress>span.warn{background:var(--warning)} .progress>span.over{background:var(--danger)} .progress>span.ok{background:var(--success)}
+.empty{padding:var(--s5) 0;text-align:center;color:var(--text-3);font-size:var(--t-md)}
+.empty b{display:block;color:var(--text-2);font-weight:500;margin-bottom:var(--s1)}
+.field{display:flex;flex-direction:column;gap:var(--s2)}
+.field>label,.field>.label{font-size:var(--t-sm);font-weight:500;color:var(--text-2)}
+.field .hint{font-size:var(--t-xs);color:var(--text-3)}
+.form{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:flex-end}
+.form .field{flex:1 1 180px;min-width:0}
+.toggle{display:flex;align-items:center;justify-content:space-between;gap:var(--s4);padding:var(--s3) 0;border-top:1px solid var(--border);cursor:pointer}
+.toggle:first-child{border-top:0}
+.toggle input{position:absolute;opacity:0;pointer-events:none}
+.toggle .sw{width:36px;height:20px;border-radius:var(--r-pill);background:var(--border-2);position:relative;flex-shrink:0;transition:background var(--dur)}
+.toggle .sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:var(--shadow-1);transition:transform var(--dur) var(--ease)}
+.toggle input:checked+.sw{background:var(--accent)}
+.toggle input:checked+.sw::after{transform:translateX(16px)}
+.toggle input:focus-visible+.sw{outline:2px solid var(--accent);outline-offset:2px}
+.toggle small{display:block;color:var(--text-3);font-size:var(--t-sm)}
+.seg{display:inline-flex;gap:2px;padding:3px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r2)}
+.seg button{height:30px;padding:0 var(--s3);border-radius:var(--r1);font-size:var(--t-sm);font-weight:500;color:var(--text-2);transition:all var(--dur)}
+.seg button:hover{color:var(--text)}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--text);box-shadow:var(--shadow-1)}
+.swatch{width:24px;height:24px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}
+.swatch[aria-pressed="true"]{box-shadow:0 0 0 2px var(--surface),0 0 0 4px currentColor}
+.tabs{display:flex;gap:var(--s5);border-bottom:1px solid var(--border);margin-bottom:var(--s5)}
+.tabs button{padding:var(--s3) 0;font-weight:500;color:var(--text-2);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button[aria-selected="true"]{color:var(--text);border-color:var(--accent)}
+.toast{position:fixed;left:50%;bottom:calc(var(--s5) + 72px);transform:translate(-50%,8px);background:var(--surface-3);color:var(--text);border:1px solid var(--border-2);box-shadow:var(--shadow-2);padding:var(--s3) var(--s4);border-radius:var(--r2);font-size:var(--t-md);opacity:0;pointer-events:none;transition:all .25s var(--ease);z-index:50;max-width:calc(100vw - 32px)}
+.toast.show{opacity:1;transform:translate(-50%,0)}
 
-/* ---- tasks widget ---- */
-#tasks { position: fixed; left: 16px; top: 74px; width: 290px; z-index: 3; padding: 12px 14px; }
-.wtitle { font: 600 11px var(--mono); letter-spacing: .2em; text-transform: uppercase; color: rgb(var(--accent)); display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.wtitle button { color: var(--muted); font-size: 16px; line-height: 1; }
-.task { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-top: 1px solid rgba(255,255,255,.04); font-size: 14px; }
-.task:first-of-type { border-top: 0; }
-.task input { width: 16px; height: 16px; margin-top: 2px; accent-color: rgb(var(--accent)); flex-shrink: 0; }
-.task > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.task > div > span { overflow-wrap: anywhere; }
-.chip { font: 11px var(--mono); color: var(--muted); white-space: nowrap; }
-.chip.over { color: var(--red); } .chip.today { color: var(--amber); }
-#taskAdd { display: none; margin-top: 8px; }
-#focusBar { display: none; margin-top: 10px; font: 12px var(--mono); color: var(--amber); }
+/* ============ SHELL ============ */
+.app{display:grid;grid-template-columns:232px minmax(0,1fr);height:100vh;height:100dvh}
+.side{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:var(--s4) var(--s3);gap:var(--s1)}
+.brand{display:flex;align-items:center;gap:var(--s2);padding:var(--s2) var(--s2) var(--s4);font-weight:600;font-size:var(--t-lg);letter-spacing:-.01em}
+.brand-mark{width:24px;height:24px;border-radius:50%;background:conic-gradient(from 200deg,var(--accent),#b59cff,var(--accent));display:grid;place-items:center}
+.brand-mark::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--surface)}
+.nav a{display:flex;align-items:center;gap:var(--s3);height:36px;padding:0 var(--s3);border-radius:var(--r1);color:var(--text-2);text-decoration:none;font-weight:500;transition:background var(--dur),color var(--dur)}
+.nav a:hover{background:var(--surface-2);color:var(--text)}
+.nav a[aria-current="page"]{background:var(--accent-soft);color:var(--accent)}
+.nav a .count{margin-left:auto;font-size:var(--t-xs);color:var(--text-3);font-variant-numeric:tabular-nums}
+.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:var(--s3);padding:var(--s3) var(--s2) 0;border-top:1px solid var(--border)}
+.engine{font-size:var(--t-xs);color:var(--text-3)}
+main{min-width:0;overflow:auto;position:relative}
+.page{max-width:1080px;margin:0 auto;padding:var(--s6) var(--s6) 120px}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--s4);margin-bottom:var(--s5);flex-wrap:wrap}
+.page-head p{color:var(--text-2);margin-top:var(--s1)}
+.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s4)}
+.grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s4)}
+.stack{display:flex;flex-direction:column;gap:var(--s4)}
+.bottom-nav{display:none}
 
-/* ---- stage ---- */
-#stage { position: fixed; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; padding-bottom: 130px; pointer-events: none; }
-#reactor { width: min(44vh, 62vw); height: min(44vh, 62vw); cursor: pointer; pointer-events: auto; }
-#state { margin-top: 4px; font: 12px var(--mono); letter-spacing: .3em; text-transform: uppercase; color: rgb(var(--c)); }
-#subs { min-height: 92px; width: min(760px, 90vw); margin-top: 16px; text-align: center; }
-#you { color: var(--muted); font-size: 14px; transition: opacity .8s; }
-#him { font-size: 19px; margin-top: 6px; transition: opacity .8s; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 12px rgba(0,0,0,.6); }
-.fade { opacity: 0; }
+/* ============ HOME ============ */
+.hero{display:flex;flex-direction:column;align-items:center;text-align:center;padding:var(--s5) 0 var(--s4)}
+.orb{position:relative;width:200px;height:200px;margin-bottom:var(--s4)}
+#orb{position:absolute;inset:0;width:100%;height:100%;cursor:pointer;border-radius:50%}
+#orb:focus-visible{outline:2px solid var(--accent);outline-offset:8px}
+.state-line{display:inline-flex;align-items:center;gap:var(--s2);font-size:var(--t-sm);font-weight:500;color:var(--text-2)}
+.state-line i{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.state-line.speaking i{animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.25}}
+.exchange{max-width:680px;margin-top:var(--s4);min-height:76px}
+.exchange .you{color:var(--text-3);font-size:var(--t-sm);margin-bottom:var(--s2);min-height:20px}
+.exchange .him{font-size:var(--t-lg);line-height:1.5;color:var(--text);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.command{position:sticky;bottom:var(--s4);margin:var(--s4) auto 0;max-width:680px;background:var(--surface);border:1px solid var(--border-2);border-radius:var(--r3);box-shadow:var(--shadow-2);display:flex;align-items:center;gap:var(--s2);padding:var(--s2);z-index:5}
+.command:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft),var(--shadow-2)}
+.command input{border:0;background:transparent;height:40px;box-shadow:none}
+.command input:focus{box-shadow:none}
+.mic{width:40px;height:40px;border-radius:var(--r2);background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;flex-shrink:0;transition:transform var(--dur)}
+.mic:active{transform:scale(.95)}
+.mic.recording{box-shadow:0 0 0 0 var(--accent-line);animation:ring 1.4s infinite}
+@keyframes ring{to{box-shadow:0 0 0 12px rgba(0,0,0,0)}}
+.quick{display:flex;flex-wrap:wrap;gap:var(--s2);justify-content:center;margin-top:var(--s4)}
+.summary{margin-top:var(--s6)}
+.summary .card{min-height:150px;display:flex;flex-direction:column}
+.big{font-size:var(--t-2xl);font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1}
+.sub{font-size:var(--t-sm);color:var(--text-2);margin-top:var(--s1)}
+.card a.more{margin-top:auto;padding-top:var(--s4);font-size:var(--t-sm);color:var(--accent);text-decoration:none;font-weight:500}
 
-/* ---- omnibar ---- */
-#omni { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); width: min(720px, 92vw); z-index: 6; }
-#omni .box { display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 16px; border-radius: 16px; }
-#omni .box:focus-within { border-color: rgba(var(--accent), .55); box-shadow: 0 0 24px rgba(var(--accent), .15); }
-#q { flex: 1; min-width: 0; background: none; border: 0; padding: 9px 0; font-size: 16px; }
-#q::placeholder { color: #50677a; }
-#omni .box > button { height: 38px; min-width: 38px; padding: 0 9px; border-radius: 11px; font-size: 15px; color: var(--muted); white-space: nowrap; }
-#omni .box > button:hover { background: rgba(255,255,255,.07); color: var(--text); }
-#mic.on { color: #021018 !important; background: rgb(var(--accent)) !important; }
-#sugg { margin-bottom: 8px; overflow: hidden; display: none; }
-#sugg.show { display: block; }
-#sugg div { padding: 9px 16px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; }
-#sugg div.sel, #sugg div:hover { background: rgba(var(--accent), .12); }
-#sugg kbd { font: 12px var(--mono); color: var(--muted); }
-.hint { text-align: center; font: 11px var(--mono); color: #4a6072; margin-top: 7px; }
+/* ============ SETTINGS ============ */
+.settings{display:grid;grid-template-columns:180px minmax(0,1fr);gap:var(--s6)}
+.settings nav{display:flex;flex-direction:column;gap:2px;position:sticky;top:var(--s6);align-self:start}
+.settings nav a{height:34px;display:flex;align-items:center;padding:0 var(--s3);border-radius:var(--r1);color:var(--text-2);text-decoration:none;font-weight:500}
+.settings nav a:hover{background:var(--surface-2);color:var(--text)}
+.settings section{scroll-margin-top:var(--s5);margin-bottom:var(--s6)}
+.settings section .card{padding:var(--s5)}
+.settings section h2{margin-bottom:var(--s1)}
+.settings section .lead{color:var(--text-2);margin-bottom:var(--s4);font-size:var(--t-sm)}
 
-/* ---- cards ---- */
-#cards { position: fixed; right: 16px; top: 74px; bottom: 110px; width: 320px; display: flex; flex-direction: column; gap: 10px; z-index: 3; overflow: hidden; }
-.card { padding: 12px 14px; animation: in .35s ease; transition: opacity .5s, transform .5s; flex-shrink: 0; border-left: 2px solid rgb(var(--accent)); }
-.card.out { opacity: 0; transform: translateX(30px); }
-.card h4 { margin: 0 0 8px; font: 600 11px var(--mono); letter-spacing: .2em; text-transform: uppercase; color: rgb(var(--accent)); display: flex; justify-content: space-between; }
-.card h4 button { color: var(--muted); }
-.li { display: flex; gap: 8px; justify-content: space-between; align-items: center; padding: 4px 0; border-top: 1px solid rgba(255,255,255,.04); font-size: 14px; }
-.li:first-of-type { border-top: 0; }
-.li span:first-child { min-width: 0; overflow-wrap: anywhere; }
-.pre { white-space: pre-wrap; font-size: 14px; max-height: 50vh; overflow-y: auto; }
-@keyframes in { from { opacity: 0; transform: translateX(30px); } }
-
-/* ---- drawers ---- */
-.drawer { position: fixed; top: 0; bottom: 0; width: min(440px, 94vw); z-index: 10; padding: 18px 20px 40px; overflow-y: auto;
-  background: rgba(7, 12, 19, .97); border: 0 solid var(--line); transition: transform .28s ease; }
-.drawer.right { right: 0; border-left-width: 1px; transform: translateX(105%); }
-.drawer.left { left: 0; border-right-width: 1px; transform: translateX(-105%); }
-.drawer.open { transform: none; }
-.drawer h3 { margin: 0 0 4px; font-size: 18px; display: flex; justify-content: space-between; align-items: center; }
-.drawer h3 button { color: var(--muted); font-size: 16px; }
-details { border-top: 1px solid var(--line); padding: 4px 0; }
-summary { cursor: pointer; padding: 12px 0; font: 600 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); list-style: none; display: flex; justify-content: space-between; }
-summary::after { content: "+"; } details[open] summary::after { content: "–"; }
-details[open] summary { color: rgb(var(--accent)); }
-.sec { display: flex; flex-direction: column; gap: 10px; padding-bottom: 14px; }
-.row { display: flex; gap: 8px; align-items: center; }
-.row > input, .row > select { flex: 1; min-width: 0; }
-.btn { padding: 8px 14px; border-radius: 10px; background: rgb(var(--accent)); color: #021018; font-weight: 600; white-space: nowrap; }
-.btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 400; }
-.btn.danger { background: transparent; color: var(--red); border: 1px solid rgba(255, 84, 104, .35); font-weight: 400; }
-.note { font-size: 12.5px; color: var(--muted); }
-.note a { color: rgb(var(--accent)); }
-label.lbl { font-size: 12.5px; color: var(--muted); display: block; margin-bottom: 4px; }
-label.lbl a { color: rgb(var(--accent)); }
-.sw { display: flex; align-items: flex-start; gap: 12px; padding: 6px 0; cursor: pointer; }
-.sw input { display: none; }
-.sw .t { width: 34px; height: 20px; border-radius: 10px; background: #233140; position: relative; flex-shrink: 0; margin-top: 2px; transition: .2s; }
-.sw .t::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #8aa0b4; transition: .2s; }
-.sw input:checked + .t { background: rgb(var(--accent)); }
-.sw input:checked + .t::after { left: 17px; background: #021018; }
-.sw small { display: block; color: var(--muted); font-size: 12px; }
-.swatches { display: flex; gap: 10px; }
-.swatches button { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; }
-.swatches button.on { border-color: #fff; box-shadow: 0 0 14px currentColor; }
-.keyrow { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
-.macro { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
-.macro .head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-.act { display: grid; grid-template-columns: 150px 1fr auto; gap: 6px; margin-top: 6px; }
-.msg { padding: 8px 0; border-top: 1px solid rgba(255,255,255,.05); font-size: 14px; }
-.msg.user { color: var(--muted); }
-.msg .meta { font: 11px var(--mono); color: #4a6072; }
-#scrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 9; display: none; }
-#scrim.show { display: block; }
-#toast { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); padding: 8px 16px; font-size: 13px; opacity: 0; transition: .3s; z-index: 20; pointer-events: none; }
-#toast.show { opacity: 1; }
-#onb[hidden], [hidden] { display: none !important; }
-#onb { position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, .55); display: flex; align-items: center; justify-content: center; padding: 16px; }
-.onb { width: min(560px, 100%); padding: 26px 28px; display: flex; flex-direction: column; gap: 14px; max-height: 92vh; overflow-y: auto; }
-.onb h2 { margin: 0; font: 600 22px "Segoe UI", sans-serif; }
-.onb .steps { display: flex; gap: 6px; } .onb .steps i { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,.1); }
-.onb .steps i.on { background: rgb(var(--accent)); }
-.onb .nav { display: flex; justify-content: space-between; margin-top: 6px; }
-@media (max-width: 1250px) { .lbl2 { display: none; } }
-@media (max-width: 1100px) { #cards { width: 270px; } #tasks { width: 250px; } #tele { font-size: 10px; } }
-@media (max-width: 900px) { #cards, #tasks, #tele { display: none; } #personas button { padding: 5px 8px; } }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+/* ============ RESPONSIVE ============ */
+@media (max-width:1040px){ .grid-3{grid-template-columns:repeat(2,minmax(0,1fr))} }
+@media (max-width:860px){
+  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;height:100dvh}
+  .side{display:none}
+  .page{padding:var(--s4) var(--s4) 136px}
+  .grid-2,.grid-3{grid-template-columns:minmax(0,1fr)}
+  .settings{grid-template-columns:minmax(0,1fr);gap:var(--s4)}
+  .settings nav{display:none}
+  .bottom-nav{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:var(--s2) var(--s2) calc(var(--s2) + env(safe-area-inset-bottom));z-index:10}
+  .bottom-nav a{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;font-weight:500;color:var(--text-3);text-decoration:none;padding:var(--s1);border-radius:var(--r1)}
+  .bottom-nav a[aria-current="page"]{color:var(--accent)}
+  .bottom-nav svg{width:22px;height:22px}
+  .command{bottom:calc(64px + env(safe-area-inset-bottom) + var(--s2))}
+  .toast{bottom:calc(var(--s5) + 150px)}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 </style>
 </head>
 <body>
-<div id="bg"><div class="dim" id="dim"></div></div>
 
-<header>
-  <div class="brand">J.A.R.V.I.S</div>
-  <span class="pill" id="link">…</span>
-  <div id="personas" class="panel"></div>
-  <span class="pill warn" id="focusPill" hidden>ФОКУС</span>
-  <div class="spacer"></div>
-  <div id="tele" title="Нажмите — подробности">—</div>
-  <div class="tools">
-    <button id="macBtn" title="Макросы">⚡<span class="lbl2"> Макросы</span></button>
-    <button id="histBtn" title="История (Ctrl+H)">🕘</button>
-    <button id="setBtn" title="Настройки (Ctrl+,)">⚙<span class="lbl2"> Настройки</span></button>
-    <button id="trayBtn" title="Свернуть в трей — Джарвис продолжит слушать">⤓<span class="lbl2"> Трей</span></button>
-  </div>
-</header>
+<div class="app">
+  <aside class="side" aria-label="Разделы">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span>Jarvis</div>
+    <nav class="nav" id="nav" aria-label="Основное">
+      <a href="#home" data-page="home"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Главная</a>
+      <a href="#goals" data-page="goals"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/></svg>Цели<span class="count" id="cGoals"></span></a>
+      <a href="#tasks" data-page="tasks"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 3 3 5-6"/></svg>Дела<span class="count" id="cTasks"></span></a>
+      <a href="#commands" data-page="commands"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M13 3 5 13.5h6L10 21l9-11h-6z"/></svg>Команды</a>
+      <a href="#settings" data-page="settings"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Настройки</a>
+    </nav>
+    <div class="side-foot">
+      <span class="badge" id="cloudBadge"><i></i>—</span>
+      <span class="engine" id="engineLine"></span>
+    </div>
+  </aside>
 
-<section id="tasks" class="panel" aria-label="Оперативные задачи">
-  <div class="wtitle"><span>Задачи</span><button id="taskPlus" title="Добавить дело">+</button></div>
-  <div id="taskList"></div>
-  <div id="taskAdd"><input id="taskInput" placeholder="Что сделать? Enter — добавить" autocomplete="off"></div>
-  <div id="focusBar"></div>
-</section>
+  <main id="main" tabindex="-1">
+    <!-- HOME -->
+    <section class="page" id="page-home" data-page="home" aria-labelledby="h-home">
+      <div class="hero">
+        <div class="orb"><canvas id="orb" role="button" tabindex="0" aria-label="Нажмите, чтобы говорить с Jarvis"></canvas></div>
+        <div class="state-line" id="stateLine"><i></i><span>Запуск…</span></div>
+        <div class="exchange" aria-live="polite">
+          <div class="you" id="you"></div>
+          <div class="him" id="him">Подождите, Jarvis запускается.</div>
+        </div>
+      </div>
 
-<div id="stage">
-  <canvas id="reactor" title="Нажмите, чтобы сказать команду"></canvas>
-  <div id="state">запуск</div>
-  <div id="subs"><div id="you"></div><div id="him"></div></div>
+      <form class="command" id="cmdForm" role="search">
+        <label class="sr" for="cmd">Команда для Jarvis</label>
+        <input id="cmd" autocomplete="off" placeholder="Напишите команду или скажите «Эй, Jarvis»">
+        <button class="mic" id="mic" type="button" aria-label="Говорить" title="Говорить (микрофон)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      </form>
+      <div class="quick">
+        <button class="btn btn-secondary" data-cmd="что у меня на экране">Что на экране</button>
+        <button class="btn btn-secondary" data-cmd="стоп">Замолчать</button>
+        <button class="btn btn-secondary" data-cmd="какой план на сегодня">План на сегодня</button>
+        <button class="btn btn-secondary" data-cmd="какие ограничения">Лимиты</button>
+      </div>
+
+      <div class="grid-3 summary">
+        <div class="card">
+          <div class="card-title"><span class="eyebrow">Дела</span></div>
+          <div class="big" id="sumTasks">0</div>
+          <div class="sub" id="sumTasksSub">открытых дел</div>
+          <a class="more" href="#tasks">Открыть дела →</a>
+        </div>
+        <div class="card">
+          <div class="card-title"><span class="eyebrow">Цели сегодня</span></div>
+          <div class="big" id="sumGoals">0</div>
+          <div class="sub" id="sumGoalsSub">целей</div>
+          <a class="more" href="#goals">Открыть цели →</a>
+        </div>
+        <div class="card">
+          <div class="card-title"><span class="eyebrow">Ближайшее</span></div>
+          <div class="big" id="sumNext">—</div>
+          <div class="sub" id="sumNextSub">напоминаний нет</div>
+          <a class="more" href="#tasks">Все напоминания →</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- GOALS -->
+    <section class="page" id="page-goals" data-page="goals" hidden aria-labelledby="h-goals">
+      <header class="page-head"><div><h1 id="h-goals">Цели</h1><p>Маленькие шаги каждый день. Jarvis напоминает утром и вечером.</p></div></header>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title"><h2>Мои цели</h2></div>
+          <form class="form" id="goalForm">
+            <div class="field grow"><label for="gTitle">Цель</label><input id="gTitle" placeholder="Например: выучить японский" required></div>
+            <div class="field" style="flex:0 0 120px"><label for="gStep">Шаг в день</label><input id="gStep" type="number" min="1" placeholder="50"></div>
+            <button class="btn btn-primary" type="submit">Добавить</button>
+          </form>
+          <div class="list" id="goalList" style="margin-top:var(--s4)"></div>
+        </div>
+        <div class="card">
+          <div class="card-title"><h2>Лимиты времени</h2></div>
+          <form class="form" id="limitForm">
+            <div class="field grow"><label for="lApp">Программа</label><input id="lApp" placeholder="YouTube, Steam…" required></div>
+            <div class="field" style="flex:0 0 120px"><label for="lMin">Минут в день</label><input id="lMin" type="number" min="5" placeholder="60"></div>
+            <button class="btn btn-primary" type="submit">Ограничить</button>
+          </form>
+          <p class="faint xs" style="margin-top:var(--s2)">За 5 минут до конца Jarvis предупредит. В конце попросит программу закрыться.</p>
+          <div class="list" id="limitList" style="margin-top:var(--s4)"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TASKS -->
+    <section class="page" id="page-tasks" data-page="tasks" hidden aria-labelledby="h-tasks">
+      <header class="page-head"><div><h1 id="h-tasks">Дела</h1><p>Отмечайте выполненное галочкой. Просроченные выделены.</p></div></header>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title"><h2>Открытые</h2><span class="badge" id="tCount">0</span></div>
+          <form class="form" id="taskForm">
+            <div class="field grow"><label for="tText">Новое дело</label><input id="tText" placeholder="Что нужно сделать" required></div>
+            <button class="btn btn-primary" type="submit">Добавить</button>
+          </form>
+          <div class="list" id="taskList" style="margin-top:var(--s4)"></div>
+        </div>
+        <div class="card">
+          <div class="card-title"><h2>Напоминания</h2></div>
+          <div class="list" id="remList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- COMMANDS: macros and history -->
+    <section class="page" id="page-commands" data-page="commands" hidden aria-labelledby="h-commands">
+      <header class="page-head"><div><h1 id="h-commands">Команды</h1><p>Готовые цепочки и история разговора.</p></div></header>
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tabMacros" aria-selected="true" aria-controls="panelMacros" data-tab="macros">Макросы</button>
+        <button role="tab" id="tabHist" aria-selected="false" aria-controls="panelHist" data-tab="hist">История</button>
+      </div>
+      <div id="panelMacros" role="tabpanel" aria-labelledby="tabMacros">
+        <div class="stack" id="macList"></div>
+      </div>
+      <div id="panelHist" role="tabpanel" aria-labelledby="tabHist" hidden>
+        <div class="card"><div class="list" id="histList"></div></div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="page" id="page-settings" data-page="settings" hidden aria-labelledby="h-settings">
+      <header class="page-head"><div><h1 id="h-settings">Настройки</h1><p>Всё, что меняет поведение Jarvis.</p></div></header>
+      <div class="settings">
+        <nav aria-label="Разделы настроек">
+          <a href="#settings/voice">Голос</a>
+          <a href="#settings/character">Характер</a>
+          <a href="#settings/look">Внешний вид</a>
+          <a href="#settings/keys">Ключи</a>
+          <a href="#settings/connections">Подключения</a>
+        </nav>
+        <div>
+          <section id="voice"><div class="card" id="cVoice"></div></section>
+          <section id="character"><div class="card" id="cCharacter"></div></section>
+          <section id="look"><div class="card" id="cLook"></div></section>
+          <section id="keys"><div class="card" id="cKeys"></div></section>
+          <section id="connections"><div class="card" id="cConn"></div></section>
+        </div>
+      </div>
+    </section>
+  </main>
 </div>
 
-<div id="cards"></div>
+<nav class="bottom-nav" aria-label="Основное (телефон)">
+  <a href="#home" data-page="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Главная</a>
+  <a href="#goals" data-page="goals"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/></svg>Цели</a>
+  <a href="#tasks" data-page="tasks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 3 3 5-6"/></svg>Дела</a>
+  <a href="#commands" data-page="commands"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M13 3 5 13.5h6L10 21l9-11h-6z"/></svg>Команды</a>
+  <a href="#settings" data-page="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>Настройки</a>
+</nav>
 
-<div id="omni">
-  <div id="sugg" class="panel"></div>
-  <div class="box panel">
-    <input id="q" autocomplete="off" placeholder="Скажите «Эй, Джарвис» или напишите…   / — разделы">
-    <button id="eyeBtn" title="Что на экране">👁 Экран</button>
-    <button id="mic" title="Говорить">🎙</button>
-    <button id="quickMac" title="Запустить макрос">⚡</button>
-    <button id="hush" title="Замолчать">⏹</button>
-  </div>
-  <div class="hint">Enter — выполнить · / — разделы · Ctrl+K — сюда · Ctrl+Alt+Space — капсула поверх игр</div>
-</div>
-
-<div id="scrim"></div>
-
-<aside class="drawer left" id="history"><h3>История <button onclick="closeAll()" aria-label="Закрыть">✕</button></h3><div id="histList"></div></aside>
-
-<aside class="drawer right" id="macros">
-  <h3>⚡ Макросы <button onclick="closeAll()" aria-label="Закрыть">✕</button></h3>
-  <p class="note">Своя фраза → цепочка действий. Скажите фразу (или «Джарвис, …фраза») — Джарвис выполнит всё по порядку.</p>
-  <div id="macList" style="display:flex;flex-direction:column;gap:10px"></div>
-  <button class="btn" style="margin-top:12px" onclick="newMacro()">+ Новый макрос</button>
-</aside>
-
-<aside class="drawer right" id="settings">
-  <h3>⚙ Настройки <button onclick="closeAll()" aria-label="Закрыть">✕</button></h3>
-  <div id="setBody"></div>
-</aside>
-<div id="toast" class="panel"></div>
-<div id="onb" hidden><div class="onb panel" role="dialog" aria-modal="true" aria-labelledby="onbTitle"><div id="onbBody"></div></div></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
-const $ = (s) => document.querySelector(s);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+/* ============ HELPERS ============ */
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const ymd = (d = new Date()) => d.toLocaleDateString("sv-SE");
+const fmtDate = (d) => d ? new Date(d).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
 async function api(path, method = "GET", body) {
   const r = await fetch(path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
-  return r.headers.get("content-type")?.includes("json") ? r.json() : r.text();
+  return (r.headers.get("content-type") || "").includes("json") ? r.json() : r.text();
 }
-function toast(t) { const el = $("#toast"); el.textContent = t; el.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 2600); }
-const store = { get(k, d) { try { const v = localStorage.getItem("j3." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-                set(k, v) { try { localStorage.setItem("j3." + k, JSON.stringify(v)); } catch {} } };
-window.store = store;
+let toastT;
+function toast(text) { const t = $("#toast"); t.textContent = text; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2800); }
+const plural = (n, one, few, many) => (n % 10 === 1 && n % 100 !== 11) ? one : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) ? few : many;
 
-let V = null, state = null, prof = null, conn = null, macros = null, history = [], status = "starting", game = false, lastAct = 0;
+/* ============ STATE ============ */
+let V = null, S = null, G = null, CONN = null, MAC = null;
+let STATUS = "starting", GAME = false, HISTORY = [];
 
-// ================= accent & look =================
-const ACCENTS = { cyan: "79,209,255", emerald: "62,230,161", amber: "255,181,71", red: "255,84,104", violet: "176,132,255" };
-const ACCENT_NAMES = { cyan: "Циан", emerald: "Изумруд", amber: "Янтарь", red: "Красный", violet: "Фиолетовый" };
-function applyLook() {
-  const ui = V?.ui || {}, root = document.documentElement.style;
-  root.setProperty("--accent", ACCENTS[ui.accent] || ACCENTS.cyan);
-  root.setProperty("--glass", ui.glass ?? .72);
-  const bg = $("#bg"), cur = bg.querySelector("video,img");
-  const want = ui.bg?.url || "";
-  if ((cur?.dataset.src || "") !== want) {
-    cur?.remove();
-    if (ui.bg) {
-      const el = document.createElement(ui.bg.kind === "video" ? "video" : "img");
-      el.dataset.src = want; el.src = want;
-      if (ui.bg.kind === "video") { el.muted = true; el.loop = true; el.autoplay = true; el.playsInline = true; }
-      bg.prepend(el);
-    }
-  }
-  $("#dim").style.opacity = ui.bg ? (ui.dim ?? .55) : 0;
-}
-
-// ================= state colours =================
-const LOOK = { starting: ["120,140,160", "запуск"], listening: [null, "жду «Джарвис»"], recording: [null, "слушаю вас"],
-  thinking: ["255,181,71", "думаю"], speaking: ["120,170,255", "говорю"], taping: ["255,84,104", "● идёт запись"], game: ["62,230,161", "игровой режим"] };
-function setStatus(s) {
-  status = s || status;
-  const [c, t] = game && status === "listening" ? LOOK.game : (LOOK[status] || LOOK.listening);
-  document.documentElement.style.setProperty("--c", c || "var(--accent)");
-  $("#state").textContent = t;
-  $("#mic").classList.toggle("on", status === "recording");
-}
-
-// ================= reactor =================
-const cv = $("#reactor"), g = cv.getContext("2d");
-let lvTarget = 0, lv = 0, lastFrame = 0;
-function fit() { const d = devicePixelRatio || 1, r = cv.getBoundingClientRect(); cv.width = r.width * d; cv.height = r.height * d; }
-addEventListener("resize", fit); fit();
-const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-function rgbOf() { const v = getComputedStyle(document.documentElement).getPropertyValue("--c").trim(); return v.startsWith("var") ? getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() : v; }
-function draw(t) {
-  requestAnimationFrame(draw);
-  const busy = status !== "listening" || lv > .03;
-  if ((!busy || reduce) && t - lastFrame < (reduce ? 200 : 50)) return;
-  lastFrame = t;
-  const W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, R = Math.min(W, H) * .46, s = reduce ? 0 : t / 1000, dpr = devicePixelRatio || 1;
-  const C = rgbOf(), col = (a) => `rgba(${C},${a})`;
-  let target = lvTarget;
-  if (status === "speaking") target = .35 + .25 * Math.sin(s * 9) * Math.sin(s * 3.3);
-  if (status === "thinking") target = .12;
-  lv += (target - lv) * .25;
-  g.clearRect(0, 0, W, H); g.lineCap = "round";
-  const spin = status === "thinking" ? s * .9 : s * .08;
-  for (let i = 0; i < 72; i++) {
-    const a = i / 72 * Math.PI * 2 + spin, long = i % 6 === 0;
-    g.strokeStyle = col(long ? .55 : .18); g.lineWidth = (long ? 2.2 : 1.2) * dpr / 1.5;
-    g.beginPath(); g.moveTo(cx + Math.cos(a) * R * (long ? .9 : .93), cy + Math.sin(a) * R * (long ? .9 : .93));
-    g.lineTo(cx + Math.cos(a) * R * .97, cy + Math.sin(a) * R * .97); g.stroke();
-  }
-  [[.82, .7, 1.1, 3], [.74, -1.2, .7, 2], [.66, 2.1, 1.6, 1.5]].forEach(([rr, sp, len, w], i) => {
-    const k = status === "thinking" ? 3 : 1, a0 = s * sp * k * .6 + i;
-    g.strokeStyle = col(.5 - i * .1); g.lineWidth = w * dpr;
-    g.beginPath(); g.arc(cx, cy, R * rr, a0, a0 + len); g.stroke();
-    g.beginPath(); g.arc(cx, cy, R * rr, a0 + Math.PI, a0 + Math.PI + len * .5); g.stroke();
+/* ============ ROUTING ============ */
+const PAGES = ["home", "goals", "tasks", "commands", "settings"];
+function route() {
+  const [page, sub] = (location.hash || "#home").slice(1).split("/");
+  const p = PAGES.includes(page) ? page : "home";
+  document.querySelectorAll("section.page").forEach((s) => s.hidden = s.dataset.page !== p);
+  document.querySelectorAll("nav a[data-page], .bottom-nav a[data-page]").forEach((a) => {
+    if (a.dataset.page === p) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
-  g.strokeStyle = col(.85); g.lineWidth = 2 * dpr; g.shadowColor = col(.9); g.shadowBlur = 18;
+  if (p === "settings") { openSettingsSection(sub || "voice"); loadConn(); }
+  if (p === "commands") loadMacros();
+  if (p === "goals" || p === "tasks") loadGoals();
+  $("#main").scrollTop = 0;
+}
+function openSettingsSection(name) {
+  const el = document.getElementById(name);
+  if (el && el.scrollIntoView) el.scrollIntoView({ block: "start" });
+}
+window.addEventListener("hashchange", route);
+
+/* ============ HOME: the core ============ */
+const orb = $("#orb"), g = orb.getContext("2d");
+let LV = 0, LV_T = 0, LAST = 0;
+function fitOrb() { const d = Math.min(2, devicePixelRatio || 1), r = orb.getBoundingClientRect(); if (!r.width) return; orb.width = r.width * d; orb.height = r.height * d; }
+addEventListener("resize", fitOrb); fitOrb();
+const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
+function accentRGB() { const c = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(); const m = c.match(/^#(\w{2})(\w{2})(\w{2})$/); return m ? `${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)}` : "122,166,255"; }
+function drawOrb(t) {
+  requestAnimationFrame(drawOrb);
+  if (!orb.width) return;
+  const busy = STATUS !== "listening" || LV > .02;
+  if (!busy && !REDUCE && t - LAST < 66) return;
+  LAST = t;
+  const W = orb.width, H = orb.height, cx = W / 2, cy = H / 2, R = Math.min(W, H) * .4, s = REDUCE ? 0 : t / 1000, d = Math.min(2, devicePixelRatio || 1);
+  let target = LV_T;
+  if (STATUS === "speaking") target = .4 + .2 * Math.sin(s * 8) * Math.sin(s * 3);
+  if (STATUS === "thinking") target = .14 + .05 * Math.sin(s * 4);
+  LV += (target - LV) * .18;
+  const C = accentRGB(), c = (a) => `rgba(${C},${a})`;
+  g.clearRect(0, 0, W, H);
+  const halo = g.createRadialGradient(cx, cy, R * .5, cx, cy, R * 1.3);
+  halo.addColorStop(0, c(.18 + LV * .2)); halo.addColorStop(1, c(0));
+  g.fillStyle = halo; g.beginPath(); g.arc(cx, cy, R * 1.3, 0, Math.PI * 2); g.fill();
   g.beginPath();
   for (let i = 0; i <= 160; i++) {
     const a = i / 160 * Math.PI * 2;
-    const n = Math.sin(a * 6 + s * 4) * .5 + Math.sin(a * 11 - s * 6.3) * .3 + Math.sin(a * 3 + s * 2.1) * .2;
-    const r = R * (.504 + lv * .16 * n + .006 * Math.sin(a * 4 + s));
+    const n = Math.sin(a * 5 + s * 1.5) * .55 + Math.sin(a * 9 - s * 2) * .3 + Math.sin(a * 2 + s * .8) * .25;
+    const r = R * (.7 + LV * .08 * n);
     i ? g.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r) : g.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
   }
-  g.closePath(); g.stroke(); g.shadowBlur = 0;
-  const cr = R * (.3 + lv * .07), grd = g.createRadialGradient(cx, cy, 0, cx, cy, cr * 1.6);
-  grd.addColorStop(0, "rgba(255,255,255,.95)"); grd.addColorStop(.18, col(.95)); grd.addColorStop(.55, col(.25)); grd.addColorStop(1, col(0));
-  g.fillStyle = grd; g.beginPath(); g.arc(cx, cy, cr * 1.6, 0, Math.PI * 2); g.fill();
-  g.strokeStyle = col(.7); g.lineWidth = 1.5; g.beginPath(); g.arc(cx, cy, cr * .62, 0, Math.PI * 2); g.stroke();
+  g.closePath();
+  const body = g.createRadialGradient(cx - R * .3, cy - R * .35, R * .05, cx, cy, R * .95);
+  body.addColorStop(0, "rgba(255,255,255,.5)"); body.addColorStop(.3, c(.95)); body.addColorStop(.8, c(.3)); body.addColorStop(1, c(.1));
+  g.fillStyle = body; g.fill();
+  g.lineWidth = 1 * d; g.strokeStyle = c(.5); g.stroke();
 }
-requestAnimationFrame(draw);
-cv.onclick = () => { lastAct = Date.now(); api("/api/listen", "POST"); };
+requestAnimationFrame(drawOrb);
+orb.onclick = () => api("/api/listen", "POST");
+orb.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); orb.click(); } };
 
-// ================= subtitles =================
-let subTimer;
-function sub(role, text) {
-  const el = role === "user" ? $("#you") : $("#him");
-  el.textContent = role === "user" ? "— " + text : text; el.classList.remove("fade");
-  if (role === "user") $("#him").classList.add("fade");
-  clearTimeout(subTimer);
-  subTimer = setTimeout(() => { $("#you").classList.add("fade"); $("#him").classList.add("fade"); }, role === "user" ? 20000 : 14000);
+const STATE_TEXT = { starting: "Запуск", listening: "Жду «Jarvis»", recording: "Слушаю вас", thinking: "Думаю", speaking: "Говорю", taping: "Идёт запись", game: "Игровой режим" };
+function setStatus(s) {
+  STATUS = s || STATUS;
+  const label = GAME && STATUS === "listening" ? STATE_TEXT.game : (STATE_TEXT[STATUS] || STATE_TEXT.listening);
+  const line = $("#stateLine");
+  line.querySelector("span").textContent = label;
+  line.classList.toggle("speaking", STATUS === "speaking");
+  $("#mic").classList.toggle("recording", STATUS === "recording");
+  $("#mic").setAttribute("aria-pressed", STATUS === "recording" ? "true" : "false");
 }
-
-// ================= interface sounds =================
-let AC = null;
-function blip(f1, f2, d = 0.07, vol = 0.035) {
-  if (!V?.voice?.ui_sounds) return;
-  try {
-    AC = AC || new AudioContext();
-    const o = AC.createOscillator(), g = AC.createGain(), t0 = AC.currentTime;
-    o.type = "sine"; o.frequency.setValueAtTime(f1, t0); o.frequency.linearRampToValueAtTime(f2, t0 + d);
-    g.gain.setValueAtTime(vol, t0); g.gain.exponentialRampToValueAtTime(0.0001, t0 + d);
-    o.connect(g).connect(AC.destination); o.start(t0); o.stop(t0 + d + 0.02);
-  } catch {}
-}
-addEventListener("pointerdown", () => { try { AC = AC || new AudioContext(); AC.resume(); } catch {} }, { once: true });
-
-// ================= cards =================
-const cards = new Map();
-function card(id, title, html, ttl = 16000) {
-  let el = cards.get(id);
-  if (!el) {
-    el = document.createElement("div"); el.className = "card panel";
-    el.onmouseenter = () => clearTimeout(el._t); el.onmouseleave = () => arm(el, id, 6000);
-    $("#cards").prepend(el); cards.set(id, el); blip(1250, 1560, 0.05);
-    while (cards.size > 4) { const [k] = cards.keys(); drop(k); }
-  }
-  el.innerHTML = `<h4>${esc(title)}<button aria-label="Закрыть" onclick="drop('${id}')">✕</button></h4>${html}`;
-  el.classList.remove("out"); arm(el, id, ttl);
-}
-function arm(el, id, ttl) { clearTimeout(el._t); if (ttl) el._t = setTimeout(() => drop(id), ttl); }
-function drop(id) { const el = cards.get(id); if (!el) return; cards.delete(id); el.classList.add("out"); setTimeout(() => el.remove(), 500); }
-window.drop = drop;
-const fmtD = (d) => new Date(d).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-function dueChip(due) {
-  if (!due) return "";
-  const d = new Date(due), now = new Date();
-  const cls = d < now ? "over" : d.toDateString() === now.toDateString() ? "today" : "";
-  return `<span class="chip ${cls}">${fmtD(due)}</span>`;
+function showExchange(role, text) {
+  if (role === "user") { $("#you").textContent = "Вы: " + text; }
+  else { $("#him").textContent = text; }
 }
 
-// ================= tasks widget =================
-function openTasks() { return (state?.tasks || []).filter((t) => !t.done).sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999")); }
+$("#cmdForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("#cmd").value.trim(); if (!text) return;
+  $("#cmd").value = "";
+  await send(text);
+});
+document.querySelectorAll("[data-cmd]").forEach((b) => b.onclick = () => send(b.dataset.cmd));
+$("#mic").onclick = () => api("/api/listen", "POST");
+async function send(text) {
+  const r = await api("/api/command", "POST", { text, speak: false });
+  if (r && r.reply) showExchange("jarvis", r.reply);
+  loadState();
+}
+
+/* ============ SUMMARY ============ */
+function renderSummary() {
+  const open = (S?.tasks || []).filter((t) => !t.done);
+  const today = ymd();
+  const overdue = open.filter((t) => t.due && new Date(t.due) < new Date()).length;
+  $("#sumTasks").textContent = open.length;
+  $("#sumTasksSub").textContent = open.length ? `${plural(open.length, "дело", "дела", "дел")}${overdue ? ` · ${overdue} просрочено` : ""}` : "всё сделано";
+  const goals = G?.goals || [];
+  const doneToday = goals.filter((x) => x.per_day && (x.log || {})[today] >= x.per_day).length;
+  $("#sumGoals").textContent = goals.length ? `${doneToday}/${goals.length}` : "0";
+  $("#sumGoalsSub").textContent = goals.length ? "выполнено сегодня" : "целей пока нет";
+  const next = (S?.reminders || []).slice().sort((a, b) => a.at.localeCompare(b.at))[0];
+  $("#sumNext").textContent = next ? fmtDate(next.at).split(",")[0] : "—";
+  $("#sumNextSub").textContent = next ? next.text : "напоминаний нет";
+}
+
+/* ============ TASKS & REMINDERS ============ */
 function renderTasks() {
-  const open = openTasks();
-  $("#taskList").innerHTML = open.slice(0, 5).map((t) => `<label class="task"><input type="checkbox" onchange="doneTask('${esc(t.id)}')">
-      <div><span>${esc(t.text)}</span>${dueChip(t.due)}</div></label>`).join("")
-    || `<div class="muted" style="font-size:14px">Дел нет. Скажите «добавь дело …» или нажмите +</div>`;
-  if (open.length > 5) $("#taskList").insertAdjacentHTML("beforeend", `<div class="chip" style="margin-top:6px;cursor:pointer" onclick="PANELS.tasks()">ещё ${open.length - 5} → /дела</div>`);
+  const open = (S?.tasks || []).filter((t) => !t.done).sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
+  $("#tCount").textContent = open.length;
+  $("#cTasks").textContent = open.length || "";
+  $("#taskList").innerHTML = open.map((t) => {
+    const over = t.due && new Date(t.due) < new Date();
+    return `<label class="item"><input type="checkbox" class="check" onchange="doneTask('${esc(t.id)}')" aria-label="Выполнено: ${esc(t.text)}">
+      <div class="grow"><div class="title">${esc(t.text)}</div>${t.due ? `<div class="meta ${over ? "over" : ""}">${over ? "просрочено · " : ""}${fmtDate(t.due)}</div>` : ""}</div></label>`;
+  }).join("") || `<div class="empty"><b>Дел нет</b>Добавьте первое дело выше или скажите «Jarvis, добавь дело …»</div>`;
 }
-window.doneTask = async (id) => { await api(`/api/tasks/${id}`, "PATCH", { done: true }); toast("Отмечено выполненным"); };
-$("#taskPlus").onclick = () => { const a = $("#taskAdd"); a.style.display = a.style.display === "block" ? "none" : "block"; $("#taskInput").focus(); };
-$("#taskInput").addEventListener("keydown", async (e) => {
-  if (e.key !== "Enter" || !e.target.value.trim()) return;
-  await api("/api/command", "POST", { text: "добавь дело " + e.target.value.trim() });
-  e.target.value = ""; $("#taskAdd").style.display = "none";
+function renderReminders() {
+  const r = (S?.reminders || []).slice().sort((a, b) => a.at.localeCompare(b.at));
+  $("#remList").innerHTML = r.map((x, i) => `<div class="item"><div class="grow"><div class="title">${esc(x.text)}</div><div class="meta">${fmtDate(x.at)}</div></div>
+    <div class="end"><button class="btn btn-danger" onclick="delReminder(${S.reminders.indexOf(x)})" aria-label="Удалить напоминание">Удалить</button></div></div>`).join("")
+    || `<div class="empty"><b>Напоминаний нет</b>Скажите «Jarvis, напомни через 10 минут…»</div>`;
+}
+window.doneTask = async (id) => { await api(`/api/tasks/${id}`, "PATCH", { done: true }); toast("Отмечено выполненным"); loadState(); };
+window.delReminder = async (i) => { await api(`/api/reminders/${i}`, "DELETE"); loadState(); };
+$("#taskForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("#tText").value.trim(); if (!text) return;
+  await api("/api/command", "POST", { text: "добавь дело " + text });
+  $("#tText").value = ""; toast("Дело добавлено"); loadState();
 });
 
-// ================= on-demand panels =================
-const PANELS = {
-  tasks() { const open = openTasks(); card("tasks", `Дела · ${open.length}`, open.map((t, i) => `<div class="li"><span>${i + 1}. ${esc(t.text)}</span>${dueChip(t.due)}</div>`).join("") || `<div class="muted">Открытых дел нет</div>`, 30000); },
-  notes() { const n = state?.notes || []; card("notes", `Память · ${n.length}`, n.slice(-8).reverse().map((x) => `<div class="li"><span>${esc(x.text)}</span></div>`).join("") || `<div class="muted">Скажите «запомни …»</div>`, 30000); },
-  reminders() { const r = state?.reminders || []; card("reminders", "Напоминания", r.slice(0, 8).map((x, i) => `<div class="li"><span>${esc(x.text)}</span><span class="chip">${fmtD(x.at)}</span><button aria-label="Удалить" onclick="api('/api/reminders/${i}','DELETE')">✕</button></div>`).join("") || `<div class="muted">Напоминаний нет</div>`, 30000); },
-  records() {
-    const r = state?.recordings || [];
-    card("records", "Записи", (state?.recording_now ? `<button class="btn danger" onclick="api('/api/record/stop','POST')">⏹ Остановить запись</button>` : `<button class="btn ghost" onclick="api('/api/record/start','POST')">⏺ Начать запись</button>`) +
-      r.slice(0, 6).map((x) => `<div class="li" style="flex-wrap:wrap"><span>${esc(x.name.replace(".wav", "").replace("_", " "))}</span><audio controls preload="none" src="/api/recording/${encodeURIComponent(x.name)}" style="height:30px;width:100%"></audio></div>`).join(""), 0);
-  },
-  history() { openDrawer("history"); }, settings() { openDrawer("settings"); }, macros() { openDrawer("macros"); },
-  screen() { send("что у меня на экране"); },
-  translate() { api("/api/translate", "POST").then((r) => toast(r.reply)); toast("Перевожу окно…"); },
-  live() { api("/api/translate/live", "POST", { on: !V?.translate_live }).then((r) => toast(r.reply)); },
-  capsule() { api("/api/capsule", "POST"); },
-  system() { teleOpen = true; pollTele(); },
-};
-const SLASH = [["дела", "Все дела", "tasks"], ["память", "Что я запомнил", "notes"], ["напоминания", "Напоминания и таймеры", "reminders"],
-  ["записи", "Записи голоса", "records"], ["экран", "Что на экране (Gemini)", "screen"], ["перевод", "Перевести окно на русский", "translate"],
-  ["живой", "Живой переводчик вкл/выкл", "live"], ["макросы", "Макросы", "macros"], ["история", "История разговора", "history"],
-  ["настройки", "Ключи, характер, вид, подключения", "settings"], ["капсула", "Мини-капсула поверх игр", "capsule"], ["система", "Нагрузка и модели", "system"]];
-
-// ================= omnibar =================
-const q = $("#q"); let suggSel = 0;
-function suggestions() {
-  const v = q.value.trim().toLowerCase();
-  if (!v.startsWith("/")) return [];
-  const w = v.slice(1);
-  return SLASH.filter(([k, t]) => k.startsWith(w) || t.toLowerCase().split(/[\s()]+/).some((x) => x.startsWith(w)));
+/* ============ GOALS & LIMITS ============ */
+function weekDone(x) {
+  const now = new Date(), start = new Date(now); start.setDate(now.getDate() - ((now.getDay() + 6) % 7)); start.setHours(0, 0, 0, 0);
+  return Object.entries(x.log || {}).filter(([d]) => new Date(d) >= start).reduce((a, [, v]) => a + v, 0);
 }
-function renderSugg() {
-  const list = suggestions(); suggSel = Math.min(suggSel, Math.max(0, list.length - 1));
-  $("#sugg").innerHTML = list.map(([k, t, p], i) => `<div class="${i === suggSel ? "sel" : ""}" data-p="${p}"><span>${esc(t)}</span><kbd>/${k}</kbd></div>`).join("");
-  $("#sugg").classList.toggle("show", list.length > 0);
-  $("#sugg").querySelectorAll("div").forEach((d) => d.onclick = () => runPanel(d.dataset.p));
+function renderGoals() {
+  const goals = G?.goals || [];
+  $("#cGoals").textContent = goals.length || "";
+  $("#goalList").innerHTML = goals.map((x) => {
+    const today = (x.log || {})[ymd()] || 0;
+    const per = x.per_day || x.per_week, done = x.per_week ? weekDone(x) : today;
+    const pct = per ? Math.min(100, Math.round(100 * done / per)) : 0;
+    const label = x.per_day ? `Сегодня ${today} из ${x.per_day}` : x.per_week ? `Неделя ${weekDone(x)} из ${x.per_week}` : `Сегодня ${today}`;
+    return `<div class="item" style="flex-wrap:wrap"><div class="grow"><div class="title">${esc(x.title)}</div><div class="meta">${esc(label)}</div>
+      ${per ? `<div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span class="${pct >= 100 ? "ok" : ""}" style="width:${pct}%"></span></div>` : ""}</div>
+      <div class="end"><button class="btn btn-secondary" onclick="tickGoal('${esc(x.id)}')">+1 шаг</button></div></div>`;
+  }).join("") || `<div class="empty"><b>Целей пока нет</b>Напишите цель слева. Например: «Японский, 50 слов в день».</div>`;
+  const limits = G?.limits || [];
+  $("#limitList").innerHTML = limits.map((x) => {
+    const used = ((G?.usage || {})[x.app] || 0) / 60, pct = Math.min(100, Math.round(100 * used / x.minutes));
+    const cls = pct >= 100 ? "over" : pct >= 80 ? "warn" : "";
+    return `<div class="item" style="flex-wrap:wrap"><div class="grow"><div class="between"><span class="title">${esc(x.app)}</span><span class="meta">${Math.round(used)} из ${x.minutes} мин</span></div>
+      <div class="progress"><span class="${cls}" style="width:${pct}%"></span></div></div>
+      <div class="end"><button class="btn btn-ghost" onclick="dropLimit('${esc(x.app)}')">Снять</button></div></div>`;
+  }).join("") || `<div class="empty"><b>Ограничений нет</b>Например: «YouTube, 60 минут».</div>`;
 }
-function runPanel(p) { q.value = ""; renderSugg(); PANELS[p](); }
-async function send(text) { lastAct = Date.now(); await api("/api/command", "POST", { text, speak: store.get("speak", false) }); }
-q.addEventListener("input", () => { suggSel = 0; renderSugg(); });
-q.addEventListener("keydown", (e) => {
-  const list = suggestions();
-  if (list.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) { suggSel = (suggSel + (e.key === "ArrowDown" ? 1 : list.length - 1)) % list.length; renderSugg(); e.preventDefault(); return; }
-  if (e.key !== "Enter") return;
-  if (list.length) return runPanel(list[suggSel][2]);
-  const text = q.value.trim(); if (!text) return;
-  q.value = ""; send(text);
+window.tickGoal = async (id) => { const x = (G?.goals || []).find((y) => y.id === id); await api("/api/command", "POST", { text: `сделал шаг по цели ${x ? x.title : id}` }); toast("Шаг записан"); loadGoals(); loadState(); };
+window.dropLimit = async (app) => { await api("/api/command", "POST", { text: `сними ограничение с ${app}` }); toast("Ограничение снято"); loadGoals(); };
+$("#goalForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const t = $("#gTitle").value.trim(), n = $("#gStep").value; if (!t) return;
+  await api("/api/command", "POST", { text: `цель: ${t}${n ? ` по ${n} в день` : ""}` });
+  $("#gTitle").value = ""; $("#gStep").value = ""; toast("Цель добавлена"); loadGoals();
 });
-$("#mic").onclick = () => { lastAct = Date.now(); api("/api/listen", "POST"); };
-$("#hush").onclick = () => api("/api/stop", "POST");
-$("#eyeBtn").onclick = () => PANELS.screen();
-$("#quickMac").onclick = async () => {
-  macros = await api("/api/macros");
-  card("quickmac", "Макросы", macros.items.map((m) => `<div class="li"><span>${esc(m.phrase)}</span><button class="btn ghost" onclick="runMacro('${m.id}')">▶</button></div>`).join("")
-    || `<div class="muted">Макросов нет — создайте в ⚡ Макросы</div>`, 20000);
-};
-window.runMacro = (id) => { lastAct = Date.now(); api(`/api/macros/${id}/run`, "POST"); };
+$("#limitForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const a = $("#lApp").value.trim(), m = $("#lMin").value || "60"; if (!a) return;
+  await api("/api/command", "POST", { text: `ограничь ${a} ${m} минут в день` });
+  $("#lApp").value = ""; $("#lMin").value = ""; toast("Ограничение добавлено"); loadGoals();
+});
+async function loadGoals() { try { G = await api("/api/goals"); renderGoals(); renderSummary(); } catch {} }
 
-// ================= header: personas, link, telemetry =================
-const PERSONAS = [["tactical", "Тактический"], ["coder", "Программист"], ["business", "Бизнес"], ["quiet", "Тихий"], ["custom", "Свой"]];
-function renderHeader() {
+/* ============ COMMANDS: macros and history ============ */
+document.querySelectorAll("[data-tab]").forEach((t) => t.onclick = () => {
+  const macros = t.dataset.tab === "macros";
+  $("#tabMacros").setAttribute("aria-selected", macros); $("#tabHist").setAttribute("aria-selected", !macros);
+  $("#panelMacros").hidden = !macros; $("#panelHist").hidden = macros;
+  if (!macros) renderHistory();
+});
+async function loadMacros() { MAC = await api("/api/macros"); renderMacros(); }
+function renderMacros() {
+  $("#macList").innerHTML = (MAC?.items || []).map((m) => `<div class="card" style="padding:var(--s4) var(--s5)">
+    <div class="between"><div class="grow"><div class="title" style="font-weight:600">«${esc(m.phrase)}»</div>
+    <div class="xs faint" style="margin-top:var(--s1)">${(m.actions || []).map((a) => esc(a.value)).join(" → ")}</div></div>
+    <button class="btn btn-primary" onclick="runMacro('${m.id}')">Запустить</button></div></div>`).join("")
+    || `<div class="card empty"><b>Макросов нет</b>Скажите «Jarvis, запомни макрос …», например «вечер дома».</div>`;
+}
+window.runMacro = (id) => { api(`/api/macros/${id}/run`, "POST"); toast("Запускаю"); };
+function renderHistory() {
+  const items = HISTORY.slice().reverse();
+  $("#histList").innerHTML = items.map((m) => `<div class="item"><div class="grow"><div class="${m.role === "user" ? "muted" : "title"}">${esc(m.text)}</div>
+    <div class="meta">${esc(m.time || "")}${m.source ? " · " + esc(m.source) : ""}</div></div></div>`).join("")
+    || `<div class="empty"><b>История пуста</b>Здесь будут ваши разговоры с Jarvis.</div>`;
+}
+
+/* ============ SETTINGS ============ */
+const ACCENTS = [["blue", "Синий", "#7aa6ff"], ["mint", "Мятный", "#3fd69b"], ["amber", "Янтарный", "#f2b150"], ["rose", "Розовый", "#ff6b7f"], ["violet", "Фиолетовый", "#b59cff"]];
+const MODES = [["tactical", "Тактический", "Коротко, по делу, «сэр»"], ["coder", "Программист", "Технично, без лишних слов"], ["business", "Бизнес", "Сроки, результат, решения"], ["quiet", "Тихий", "Отвечает только на экране"], ["custom", "Свой", "Опишите характер сами"]];
+const v = (id) => document.getElementById(id)?.value?.trim() || "";
+window.setVal = (section, key, value) => api("/api/settings", "POST", { section, key, value }).then(() => { toast("Сохранено"); loadV3(); });
+window.setPersona = (id) => api("/api/persona", "POST", { persona: id }).then(() => { toast("Характер изменён"); loadV3(); });
+window.saveKey = async (name, id) => { const r = await api("/api/keys", "POST", { name, value: v(id) }); toast(r.message || "Сохранено"); $(`#${id}`).value = ""; loadV3(); };
+window.cAct = async (action, body) => { const r = await api(`/api/connections/${action}`, "POST", body || {}); if (r.message) toast(r.message); loadConn(); };
+function toggle(id, checked, title, hint, handler) {
+  return `<label class="toggle"><span class="grow"><span style="font-weight:500">${esc(title)}</span>${hint ? `<small>${esc(hint)}</small>` : ""}</span><input type="checkbox" id="${id}" ${checked ? "checked" : ""} onchange="${handler}"><span class="sw" aria-hidden="true"></span></label>`;
+}
+function keyBadge(on) { return `<span class="badge ${on ? "ok" : ""}"><i></i>${on ? "сохранён" : "не задан"}</span>`; }
+function renderSettings() {
   if (!V) return;
-  $("#personas").innerHTML = PERSONAS.map(([id, t]) => `<button class="${V.persona === id ? "on" : ""}" onclick="setPersona('${id}')">${t}</button>`).join("");
-  const c = V.cloud, link = $("#link");
-  if (c.enabled) { link.textContent = c.error ? "ОБЛАКО: ОШИБКА" : "CLOUD ACTIVE"; link.className = "pill " + (c.error ? "bad" : "ok"); link.title = c.error || `${c.provider || ""} ${c.model || ""}`; }
-  else { link.textContent = "ЛОКАЛЬНО"; link.className = "pill warn"; link.title = "Добавьте ключ Groq в ⚙ Настройки, чтобы освободить видеокарту"; }
-  $("#focusPill").hidden = !V.focus;
+  const ui = V.ui || {}, vo = V.voice || {}, k = V.keys || {};
+  $("#cVoice").innerHTML = `
+    <h2>Голос</h2><p class="lead">Как Jarvis говорит и как его слышно.</p>
+    <div class="field" style="margin-bottom:var(--s4)"><span class="label">Синтезатор</span>
+      <div class="seg" role="group" aria-label="Синтезатор">
+        <button aria-pressed="${vo.engine === "piper"}" onclick="setVal('voice','tts_engine_ru','piper')">Piper · офлайн</button>
+        <button aria-pressed="${vo.engine === "edge"}" onclick="setVal('voice','tts_engine_ru','edge')">Microsoft · живее</button>
+      </div>
+      <span class="hint">Piper отвечает сразу и без интернета. Microsoft звучит естественнее, но нужна связь.</span></div>
+    <div class="row" style="flex-wrap:wrap">
+      <button class="btn btn-secondary" onclick="api('/api/say','POST',{text:'Слушаю вас. Так звучит мой голос.'})">Послушать</button>
+      <button class="btn btn-secondary" onclick="api('/api/voice/enroll','POST');toast('Читайте текст в окне Jarvis')">Запомнить мой голос</button>
+    </div>
+    <div style="margin-top:var(--s4)">${toggle("tBarge", V.features?.barge_in !== false, "Можно перебивать", "Скажите «стоп» или имя, пока Jarvis говорит", "setVal('features','barge_in',this.checked)")}
+    ${toggle("tLock", V.features?.voice_lock !== false, "Слушать только меня", "Чужие голоса и телевизор не запускают Jarvis", "setVal('features','voice_lock',this.checked)")}</div>`;
+  $("#cCharacter").innerHTML = `
+    <h2>Характер</h2><p class="lead">Как Jarvis формулирует ответы.</p>
+    <div class="col">${MODES.map(([id, t, d]) => `<label class="toggle" style="border-top:1px solid var(--border)"><span class="grow"><span style="font-weight:500">${esc(t)}</span><small>${esc(d)}</small></span>
+      <input type="radio" name="persona" ${V.persona === id ? "checked" : ""} onchange="setPersona('${id}')"><span class="sw" style="border-radius:50%" aria-hidden="true"></span></label>`).join("")}</div>
+    <div class="field" style="margin-top:var(--s4)"><label for="customP">Свой характер</label><textarea id="customP" rows="3" placeholder="Например: строгий тренер по английскому, коротко и с исправлением ошибок">${esc(V.custom_persona)}</textarea>
+      <div><button class="btn btn-secondary" onclick="api('/api/persona','POST',{custom_persona:v('customP'),persona:'custom'}).then(()=>{toast('Сохранено');loadV3()})">Сохранить</button></div></div>`;
+  const cur = ui.accent || "blue", theme = store.get("theme", "auto");
+  $("#cLook").innerHTML = `
+    <h2>Внешний вид</h2><p class="lead">Цвет и тема. Изменения видны сразу.</p>
+    <div class="field" style="margin-bottom:var(--s4)"><span class="label">Цвет акцента</span>
+      <div class="row" role="group" aria-label="Цвет акцента">${ACCENTS.map(([id, name, hex]) => `<button class="swatch" style="background:${hex};color:${hex}" aria-label="${name}" aria-pressed="${cur === id}" onclick="setVal('ui','accent','${id}')"></button>`).join("")}</div></div>
+    <div class="field"><span class="label">Тема</span>
+      <div class="seg" role="group" aria-label="Тема">
+        <button aria-pressed="${theme === "auto"}" onclick="setTheme('auto')">Как в системе</button>
+        <button aria-pressed="${theme === "dark"}" onclick="setTheme('dark')">Тёмная</button>
+        <button aria-pressed="${theme === "light"}" onclick="setTheme('light')">Светлая</button></div></div>`;
+  $("#cKeys").innerHTML = `
+    <h2>Ключи</h2><p class="lead">Речь и мозг — Groq, зрение — Gemini. Оба бесплатные. Ключи хранятся в диспетчере учётных данных Windows и не показываются обратно.</p>
+    <div class="col">
+      <div class="field"><label for="kGroq">Groq ${keyBadge(k.groq)}</label><div class="form" style="flex-wrap:nowrap"><input id="kGroq" type="password" placeholder="gsk_…" autocomplete="off"><button class="btn btn-secondary" onclick="saveKey('groq','kGroq')">Сохранить</button></div><span class="hint"><a href="https://console.groq.com/keys" target="_blank" rel="noopener">Где взять ключ</a></span></div>
+      <div class="field"><label for="kGem">Gemini ${keyBadge(k.gemini)}</label><div class="form" style="flex-wrap:nowrap"><input id="kGem" type="password" placeholder="AIza…" autocomplete="off"><button class="btn btn-secondary" onclick="saveKey('gemini','kGem')">Сохранить</button></div><span class="hint"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Где взять ключ</a></span></div>
+    </div>
+    <div style="margin-top:var(--s4)">${toggle("tLocal", V.cloud?.local_fallback, "Без интернета — локальные модели", "Загрузятся в видеопамять только при обрыве связи", "setVal('cloud','local_fallback',this.checked)")}</div>`;
+  renderConn();
 }
-window.setPersona = async (id) => { await api("/api/persona", "POST", { persona: id }); if (id === "custom" && !V.custom_persona) { openDrawer("settings"); document.getElementById("secPersona").open = true; } };
-let teleOpen = false;
-async function pollTele() {
-  if (document.hidden) return;
+function setTheme(t) { store.set("theme", t); applyTheme(); renderSettings(); }
+function applyTheme() { const t = store.get("theme", "auto"); document.documentElement.dataset.theme = t === "auto" ? "" : t; }
+function renderConn() {
+  const c = CONN || {}, wa = c.whatsapp || {};
+  const waBody = !wa.enabled ? `<button class="btn btn-secondary" onclick="cAct('whatsapp',{enabled:true})">Подключить WhatsApp</button>`
+    : wa.state === "connected" ? `<div class="row"><span class="badge ok"><i></i>подключён</span><button class="btn btn-danger" onclick="cAct('whatsapp_logout')">Отключить</button></div>`
+    : wa.state === "qr" && wa.qr ? `<p class="small muted" style="margin-bottom:var(--s3)">WhatsApp → Связанные устройства → Привязать устройство. Код обновляется сам.</p>
+        <img alt="QR-код WhatsApp" src="${wa.qr}" style="background:#fff;padding:var(--s2);border-radius:var(--r2);width:240px;max-width:100%">`
+    : `<p class="small muted">Запускается… ${esc(wa.state || "")}</p>`;
+  $("#cConn").innerHTML = `
+    <h2>Подключения</h2><p class="lead">Сервисы, которые Jarvis читает и отправляет.</p>
+    <div class="col" style="gap:var(--s5)">
+      <div><h3 style="margin-bottom:var(--s2)">WhatsApp</h3>${waBody}</div>
+      <div><h3 style="margin-bottom:var(--s2)">Календарь</h3><p class="small muted" style="margin-bottom:var(--s2)">Подключено: ${c.calendar?.count ?? 0}. Вставьте секретную ссылку .ics из Google Календаря.</p>
+        <div class="form" style="flex-wrap:nowrap"><input id="calUrl" type="password" placeholder="Секретная ссылка .ics" autocomplete="off"><button class="btn btn-secondary" onclick="cAct('calendar_add',{url:v('calUrl')})">Добавить</button></div></div>
+      <div><h3 style="margin-bottom:var(--s2)">Почта</h3>${(c.email || []).map((a) => `<div class="item"><div class="grow title">${esc(a.address)}</div><div class="end"><button class="btn btn-danger" onclick="cAct('email_delete',{address:'${esc(a.address)}'})">Удалить</button></div></div>`).join("") || `<p class="small muted">Не подключена</p>`}</div>
+    </div>`;
+}
+async function loadConn() { try { CONN = await api("/api/connections"); renderConn(); } catch {} }
+
+/* ============ VITALS ============ */
+async function loadV3() {
   try {
-    const t = await api("/api/telemetry");
-    const llm = (t.llm || []).reduce((a, m) => a + m.vram_mb, 0) / 1024, stt = Object.values(t.whisper || {}).includes("cuda");
-    const mine = (llm + (stt ? 1.6 : 0)).toFixed(1);
-    $("#tele").innerHTML = `JARVIS VRAM <b>${mine} GB</b> · ${t.cloud?.enabled ? "<b>CLOUD</b>" : "LOCAL"} · CPU <b>${Math.round(t.cpu)}%</b>`;
-    $("#tele").title = t.gpu ? `Видеокарта всего: ${(t.gpu.vram_used / 1024).toFixed(1)} из ${(t.gpu.vram_total / 1024).toFixed(1)} ГБ (с играми и браузером)` : "";
-    if (teleOpen) {
-      teleOpen = false;
-      const c = t.cloud || {};
-      card("tele", "Система", `<div class="li"><span>Видеопамять Джарвиса</span><span class="chip">${mine} ГБ</span></div>
-        <div class="li"><span>Видеокарта всего</span><span class="chip">${t.gpu ? (t.gpu.vram_used / 1024).toFixed(1) + " / " + (t.gpu.vram_total / 1024).toFixed(1) + " ГБ · " + t.gpu.temp + "°C" : "—"}</span></div>
-        <div class="li"><span>Распознавание речи</span><span class="chip">${c.stt ? "Groq · " + (c.stt_ms || "—") + " мс" : stt ? "Whisper на GPU" : "Whisper на CPU"}</span></div>
-        <div class="li"><span>Мозг</span><span class="chip">${c.enabled ? (c.model || "облако") + (c.ms ? " · " + c.ms + " мс" : "") : (t.llm?.length ? t.llm[0].name : "локальный")}</span></div>
-        <div class="li"><span>Зрение</span><span class="chip">${c.gemini ? "Gemini" : "нет ключа"}</span></div>
-        <div class="li"><span>Процессор / ОЗУ</span><span class="chip">${Math.round(t.cpu)}% · ${t.ram ? t.ram.used_gb + " / " + t.ram.total_gb + " ГБ" : "—"}</span></div>
-        ${c.error ? `<div class="note" style="color:var(--red)">${esc(c.error)}</div>` : ""}`, 25000);
-    }
+    V = await api("/api/v3");
+    applyTheme();
+    const ui = V.ui || {}, [, , hex] = ACCENTS.find(([id]) => id === ui.accent) || ACCENTS[0];
+    document.documentElement.style.setProperty("--accent", hex);
+    const c = V.cloud || {}, b = $("#cloudBadge");
+    b.className = "badge " + (c.enabled ? (c.error ? "bad" : "ok") : "warn");
+    b.innerHTML = `<i></i>${c.enabled ? (c.error ? "Облако: ошибка" : "Облако подключено") : "Локальный режим"}`;
+    b.title = c.error || "";
+    $("#engineLine").textContent = `Характер: ${(MODES.find(([id]) => id === V.persona) || MODES[0])[1]}`;
+    renderSettings();
+    if (!V.onboarded) maybeOnboard();
   } catch {}
 }
-$("#tele").onclick = () => PANELS.system();
-setInterval(pollTele, 4000); pollTele();
-document.addEventListener("visibilitychange", pollTele);
-$("#trayBtn").onclick = async () => { const r = await api("/api/window/hide", "POST"); if (!r.ok) toast("Закройте окно — Джарвис останется в трее"); };
+let ONBOARD_SHOWN = false;
+function maybeOnboard() {
+  if (ONBOARD_SHOWN) return; ONBOARD_SHOWN = true;
+  toast("Добавьте ключ Groq в «Настройки → Ключи», чтобы Jarvis работал в облаке");
+  api("/api/settings", "POST", { section: "ui", key: "onboarded", value: true });
+}
+const store = { get(k, d) { try { const x = localStorage.getItem("jv." + k); return x == null ? d : JSON.parse(x); } catch { return d; } },
+                set(k, x) { try { localStorage.setItem("jv." + k, JSON.stringify(x)); } catch {} } };
+applyTheme();
 
-// ================= drawers =================
-function openDrawer(id) {
-  closeAll(); $("#" + id).classList.add("open"); $("#scrim").classList.add("show"); blip(700, 980, 0.06);
-  if (id === "history") renderHistory();
-  if (id === "macros") loadMacros();
-  if (id === "settings") { loadConn(); loadProfiles(); renderSettings(); }
-}
-function closeAll() { document.querySelectorAll(".drawer").forEach((d) => d.classList.remove("open")); $("#scrim").classList.remove("show"); }
-window.closeAll = closeAll; window.openDrawer = openDrawer;
-$("#scrim").onclick = closeAll;
-$("#histBtn").onclick = () => openDrawer("history");
-$("#setBtn").onclick = () => openDrawer("settings");
-$("#macBtn").onclick = () => openDrawer("macros");
-function renderHistory() {
-  $("#histList").innerHTML = history.slice().reverse().map((m) => `<div class="msg ${m.role === "user" ? "user" : ""}">${m.role === "user" ? "— " : ""}${esc(m.text)}
-    <div class="meta">${esc(m.time || "")}${m.source ? " · " + esc(m.source) : ""}</div></div>`).join("") || `<div class="muted">Пока пусто</div>`;
-}
-
-// ================= macros editor =================
-async function loadMacros() { macros = await api("/api/macros"); renderMacros(); }
-function actRow(a, i, mi) {
-  return `<div class="act"><select onchange="macEdit(${mi},'type',this.value,${i})">${Object.entries(macros.types).map(([k, t]) => `<option value="${k}" ${a.type === k ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
-    <input value="${esc(a.value)}" placeholder="${esc(PH[a.type] || "")}" onchange="macEdit(${mi},'value',this.value,${i})"><button aria-label="Удалить действие" onclick="macEdit(${mi},'del',null,${i})">✕</button></div>`;
-}
-const PH = { run: "C:\\Games\\game.exe или telegram", url: "https://…", keys: "ctrl+shift+esc", volume: "60", app_volume: "discord=40", say: "Готов к бою, сэр", command: "включи режим игра", wait: "2" };
-function renderMacros() {
-  $("#macList").innerHTML = macros.items.map((m, mi) => `<div class="macro">
-      <div class="head"><input value="${esc(m.phrase)}" placeholder="Фраза, например «боевой режим»" onchange="macEdit(${mi},'phrase',this.value)">
-        <button class="btn ghost" title="Выполнить" onclick="runMacro('${m.id}')">▶</button></div>
-      ${(m.actions || []).map((a, i) => actRow(a, i, mi)).join("")}
-      <div class="row" style="margin-top:8px"><input value="${esc(m.reply || "")}" placeholder="Что сказать в конце (необязательно)" onchange="macEdit(${mi},'reply',this.value)"></div>
-      <div class="row" style="margin-top:8px"><button class="btn ghost" onclick="macEdit(${mi},'add')">+ действие</button><div class="spacer"></div>
-        <button class="btn" onclick="macSave(${mi})">Сохранить</button><button class="btn danger" onclick="macDel(${mi})">Удалить</button></div></div>`).join("")
-    || `<div class="muted">Пока нет макросов. Например: «боевой режим» → запустить CS2, громкость Discord 40, сказать «Готов, сэр».</div>`;
-}
-window.newMacro = () => { macros.items.unshift({ id: "", phrase: "", reply: "", actions: [{ type: "run", value: "" }] }); renderMacros(); };
-window.macEdit = (mi, field, value, i) => {
-  const m = macros.items[mi];
-  if (field === "add") m.actions.push({ type: "say", value: "" });
-  else if (field === "del") m.actions.splice(i, 1);
-  else if (i !== undefined) m.actions[i][field] = value;
-  else m[field] = value;
-  if (field === "add" || field === "del" || field === "type") renderMacros();
-};
-window.macSave = async (mi) => { const m = macros.items[mi]; if (!m.phrase.trim()) return toast("Задайте фразу"); macros.items[mi] = await api("/api/macros", "POST", m); renderMacros(); toast("Макрос сохранён"); };
-window.macDel = async (mi) => { const m = macros.items[mi]; if (!confirm(`Удалить макрос «${m.phrase}»?`)) return; if (m.id) await api(`/api/macros/${m.id}`, "DELETE"); macros.items.splice(mi, 1); renderMacros(); };
-
-// ================= settings drawer =================
-async function loadProfiles() { prof = await api("/api/profiles"); renderSettings(); }
-async function loadConn() { conn = await api("/api/connections"); renderSettings(); }
-window.pAct = async (action, body) => { prof = await api(`/api/profiles/${action}`, "POST", body); renderSettings(); };
-window.setVal = (section, key, value) => api("/api/settings", "POST", { section, key, value }).then(() => toast("Сохранено"));
-const sw = (checked, onchange, title, hint) => `<label class="sw"><input type="checkbox" ${checked ? "checked" : ""} onchange="${onchange}"><span class="t"></span><span>${esc(title)}${hint ? `<small>${esc(hint)}</small>` : ""}</span></label>`;
-const keyState = (on) => on ? `<span class="pill ok">сохранён</span>` : `<span class="pill">нет</span>`;
-const v = (id) => document.getElementById(id)?.value?.trim() || "";
-window.v = v;
-window.saveKey = async (name, id) => { const r = await api("/api/keys", "POST", { name, value: v(id) }); toast(r.message); document.getElementById(id).value = ""; };
-window.delKey = async (name) => { if (confirm("Удалить ключ?")) { const r = await api("/api/keys", "POST", { name, value: "" }); toast(r.message); } };
-window.cAct = async (action, body) => { const r = await api(`/api/connections/${action}`, "POST", body || {}); if (r.message) toast(r.message); if (r.step) tgStep = r.step.startsWith("ok") ? "phone" : r.step; loadConn(); };
-let tgStep = "phone";
-const openSecs = new Set(store.get("openSecs", ["secKeys"]));
-function sec(id, title, body) { return `<details id="${id}" ${openSecs.has(id) ? "open" : ""} ontoggle="secToggle(this)"><summary>${title}</summary><div class="sec">${body}</div></details>`; }
-window.secToggle = (d) => { d.open ? openSecs.add(d.id) : openSecs.delete(d.id); store.set("openSecs", [...openSecs]); };
-window.uploadBg = async (input) => {
-  const f = input.files[0]; if (!f) return;
-  const fd = new FormData(); fd.append("file", f);
-  toast("Загружаю фон…");
-  const r = await fetch("/api/bg", { method: "POST", body: fd });
-  toast(r.ok ? "Фон установлен" : "Не получилось: " + (await r.text()));
-};
-function renderSettings() {
-  if (!V || !$("#settings").classList.contains("open")) return;
-  const k = V.keys, rb = V.remote, ui = V.ui;
-  const keys = `<div class="note">Облако освобождает видеокарту: речь и мозг — Groq, зрение — Gemini. Оба ключа бесплатные. Ключи хранятся в диспетчере учётных данных Windows и не показываются обратно.</div>
-    <div><label class="lbl">Groq — речь и мозг · <a href="https://console.groq.com/keys" target="_blank">console.groq.com/keys</a> ${keyState(k.groq)}</label>
-      <div class="keyrow"><input id="kGroq" type="password" placeholder="gsk_…" autocomplete="off"><button class="btn" onclick="saveKey('groq','kGroq')">Сохранить</button></div></div>
-    <div><label class="lbl">Gemini — зрение и запасной мозг · <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> ${keyState(k.gemini)}</label>
-      <div class="keyrow"><input id="kGem" type="password" placeholder="AIza…" autocomplete="off"><button class="btn" onclick="saveKey('gemini','kGem')">Сохранить</button></div></div>
-    <div><label class="lbl">Claude (по желанию) · <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a> ${keyState(k.anthropic)}</label>
-      <div class="keyrow"><input id="kAnt" type="password" placeholder="sk-ant-…" autocomplete="off"><button class="btn" onclick="saveKey('anthropic','kAnt')">Сохранить</button></div></div>
-    ${sw(V.cloud.local_fallback, "setVal('cloud','local_fallback',this.checked)", "Без интернета — локальные модели", "Whisper и Ollama загрузятся в видеопамять только при обрыве связи")}
-    ${(k.groq || k.gemini) ? `<button class="btn danger" onclick="delKey(prompt('Какой ключ удалить: groq, gemini или anthropic?')||'')">Удалить ключ…</button>` : ""}`;
-  const persona = `<div class="row">${PERSONAS.map(([id, t]) => `<button class="btn ${V.persona === id ? "" : "ghost"}" onclick="setPersona('${id}')">${t}</button>`).join("")}</div>
-    <div><label class="lbl">Свой характер — кто такой Джарвис и как отвечает</label>
-      <textarea id="customP" rows="4" placeholder="Например: ты строгий тренер по английскому, отвечаешь коротко и исправляешь мои ошибки">${esc(V.custom_persona)}</textarea>
-      <button class="btn ghost" style="margin-top:6px" onclick="api('/api/persona','POST',{custom_persona:v('customP'),persona:'custom'}).then(()=>toast('Сохранено'))">Сохранить и включить</button></div>
-    <div><label class="lbl">Фраза при запуске</label><input id="greet" value="${esc(V.greeting_text)}" onchange="setVal('assistant','greeting_text',this.value)"></div>
-    ${sw(V.startup_report, "setVal('assistant','startup_report',this.checked)", "Полный отчёт при включении", "Дела, почта, сообщения. Выключено — только приветствие")}`;
-  const look = `<div class="swatches">${Object.entries(ACCENTS).map(([id, rgb]) => `<button class="${ui.accent === id ? "on" : ""}" style="background:rgb(${rgb});color:rgb(${rgb})" title="${ACCENT_NAMES[id]}" aria-label="${ACCENT_NAMES[id]}" onclick="setVal('ui','accent','${id}')"></button>`).join("")}</div>
-    <div><label class="lbl">Прозрачность стекла</label><input type="range" min="0.25" max="0.95" step="0.05" value="${ui.glass}" onchange="setVal('ui','glass',+this.value)" style="padding:0"></div>
-    ${sw(ui.capsule_auto, "setVal('ui','capsule_auto',this.checked)", "Капсула сама появляется поверх игр", "Когда окно Джарвиса не на экране: точка-реактор и строка ответа сверху, исчезает через 3 с")}
-    <div><label class="lbl">Фон: видео (.mp4, .webm) или картинка ${ui.bg ? "— установлен" : ""}</label>
-      <input type="file" accept="video/mp4,video/webm,image/*" onchange="uploadBg(this)" style="padding:6px"></div>
-    ${ui.bg ? `<div><label class="lbl">Затемнение фона</label><input type="range" min="0" max="0.9" step="0.05" value="${ui.dim}" onchange="setVal('ui','dim',+this.value)" style="padding:0"></div>
-      <button class="btn danger" onclick="api('/api/bg','DELETE')">Убрать фон</button>` : ""}`;
-  const vo = V.voice || {};
-  const EDGE = [["ru-RU-DmitryNeural", "Дмитрий — мужской"], ["ru-RU-SvetlanaNeural", "Светлана — женский"], ["ru-RU-DariyaNeural", "Дария — женский"]];
-  const voice = `<div><label class="lbl">Синтезатор</label><select onchange="setVal('voice','tts_engine_ru',this.value)">
-        <option value="piper" ${vo.engine === "piper" ? "selected" : ""}>Piper — офлайн, мгновенно</option>
-        <option value="edge" ${vo.engine === "edge" ? "selected" : ""}>Microsoft Neural — живее, нужен интернет</option></select></div>
-    ${vo.engine === "edge" ? `<div><label class="lbl">Голос Microsoft</label><select onchange="setVal('voice','edge_voice_ru',this.value)">${EDGE.map(([id, t]) => `<option value="${id}" ${vo.edge === id ? "selected" : ""}>${t}</option>`).join("")}</select></div>
-      <div class="row"><div style="flex:1"><label class="lbl">Скорость: ${esc(vo.edge_rate)}</label><input type="range" min="-30" max="40" step="5" value="${parseInt(vo.edge_rate) || 0}" style="padding:0" onchange="setVal('voice','edge_rate',(this.value>=0?'+':'')+this.value+'%')"></div>
-        <div style="flex:1"><label class="lbl">Тембр: ${esc(vo.edge_pitch)}</label><input type="range" min="-20" max="20" step="2" value="${parseInt(vo.edge_pitch) || 0}" style="padding:0" onchange="setVal('voice','edge_pitch',(this.value>=0?'+':'')+this.value+'Hz')"></div></div>`
-    : `<div><label class="lbl">Голос Piper</label><select onchange="setVal('voice','piper_voice_ru',this.value)">${(vo.piper_voices || []).map((n) => `<option ${vo.piper === n ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>`}
-    <button class="btn ghost" onclick="api('/api/say','POST',{text:'Привет, сэр. Так звучит мой голос.'})">▶ Послушать</button>
-    ${sw(vo.ui_sounds, "setVal('voice','ui_sounds',this.checked)", "Звуки интерфейса", "Короткие тактические сигналы при пробуждении, ответе и в окне")}
-    <div><label class="lbl">Музыка во время разговора: ${Math.round((vo.duck_level ?? .15) * 100)}%</label><input type="range" min="0" max="0.6" step="0.05" value="${vo.duck_level ?? .15}" style="padding:0" onchange="setVal('voice','duck_level',+this.value)"></div>
-    <div><label class="lbl">Голосовой пак (короткие фразы персонажа при выполнении команд)</label>
-      <select onchange="api('/api/pack','POST',{name:this.value})"><option value="">Без пака — голос Piper</option>${V.packs.map((p) => `<option ${V.pack === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select>
-      <div class="note">Свои паки: папка voices\\packs\\&lt;имя&gt;\\ok, start, error с файлами .wav.</div></div>
-    <div style="font-size:14px">${V.voice_enrolled ? "✅ Джарвис знает ваш голос." : "Джарвис отвечает любому голосу."}</div>
-    <div class="row"><button class="btn ghost" onclick="api('/api/voice/enroll','POST');closeAll()">${V.voice_enrolled ? "Запомнить заново" : "🎙 Запомнить мой голос"}</button>
-      ${V.voice_enrolled ? `<button class="btn danger" onclick="if(confirm('Забыть ваш голос?'))api('/api/voice/forget','POST')">Забыть</button>` : ""}</div>
-    ${sw(store.get("speak", false), "store.set('speak',this.checked)", "Отвечать голосом на набранный текст", "")}`;
-  const bot = `<div class="note">Управление ноутбуком с телефона. 1) Telegram → <b>@BotFather</b> → /newbot → скопируйте токен. 2) Вставьте сюда. 3) Напишите своему боту любое сообщение и нажмите «Это я». Бот слушается только вас.</div>
-    <div><label class="lbl">Токен бота ${keyState(k.telegram_bot)} ${rb.running ? `<span class="pill ok">@${esc(rb.username)} работает</span>` : rb.error ? `<span class="pill bad">${esc(rb.error)}</span>` : ""}</label>
-      <div class="keyrow"><input id="kBot" type="password" placeholder="123456:ABC…" autocomplete="off"><button class="btn" onclick="saveKey('telegram_bot','kBot')">Сохранить</button></div></div>
-    ${rb.owner_id ? `<div style="font-size:14px">Хозяин: ID ${rb.owner_id} <button class="btn ghost" onclick="api('/api/remote','POST',{owner_id:0})">Отвязать</button></div>`
-      : rb.pending ? `<div class="row"><span style="font-size:14px">Написал: ${esc(rb.pending.name)} ${rb.pending.username ? "@" + esc(rb.pending.username) : ""} (ID ${rb.pending.id})</span><button class="btn" onclick="api('/api/remote','POST',{owner_id:${rb.pending.id}})">Это я</button></div>`
-      : k.telegram_bot ? `<div class="note">Напишите своему боту в Telegram — здесь появится кнопка «Это я».</div>` : ""}
-    ${sw(rb.enabled, "api('/api/remote','POST',{enabled:this.checked})", "Бот включён", "/screen, /status, /run, /close_game, /shutdown или любая команда текстом")}`;
-  let modes = `<div class="muted">Загрузка…</div>`;
-  if (prof) {
-    const id = prof.effective, p = prof.profiles[id];
-    modes = `<div class="row"><select onchange="pAct('activate',{id:this.value})">${Object.entries(prof.profiles).map(([pid, pp]) => `<option value="${pid}" ${pid === id ? "selected" : ""}>${pp.icon || ""} ${esc(pp.title)}</option>`).join("")}</select></div>
-      <div class="note">Функции режима «${esc(p.title)}»:</div>
-      ${Object.entries(prof.features).map(([fk, f]) => sw(p.features[fk], `pAct('update',{id:'${id}',feature:'${fk}',value:this.checked})`, f.title, f.hint)).join("")}
-      ${sw(prof.auto_game, "pAct('auto_game',{value:this.checked})", "Игровой режим сам при запуске игры", "")}`;
-  }
-  let conns = `<div class="muted">Загрузка…</div>`;
-  if (conn) {
-    const c = conn, tg = c.telegram, wa = c.whatsapp;
-    const tgBody = tg.connected ? `<div class="row"><span class="pill ok">подключён</span><button class="btn ghost" onclick="cAct('telegram_logout')">Выйти</button></div>`
-      : !tg.has_hash ? `<div class="note">Чтение ваших чатов: my.telegram.org → API development tools → api_id и api_hash.</div><div class="row"><input id="tgId" placeholder="api_id" style="max-width:110px"><input id="tgHash" placeholder="api_hash"><button class="btn" onclick="cAct('telegram_creds',{api_id:v('tgId'),api_hash:v('tgHash')})">OK</button></div>`
-      : tgStep === "code" ? `<div class="row"><input id="tgCode" placeholder="Код из Telegram"><button class="btn" onclick="cAct('telegram_signin',{code:v('tgCode')})">Войти</button></div>`
-      : tgStep === "password" ? `<div class="row"><input id="tgPwd" type="password" placeholder="Облачный пароль"><button class="btn" onclick="cAct('telegram_signin',{password:v('tgPwd')})">Войти</button></div>`
-      : `<div class="row"><input id="tgPhone" placeholder="+998 90 123 45 67"><button class="btn" onclick="cAct('telegram_code',{phone:v('tgPhone')})">Код</button></div>`;
-    const waBody = !wa.enabled ? `<button class="btn ghost" onclick="cAct('whatsapp',{enabled:true})">Включить</button>`
-      : wa.state === "connected" ? `<div class="row"><span class="pill ok">подключён</span><button class="btn ghost" onclick="cAct('whatsapp_logout')">Выйти</button><button class="btn ghost" onclick="cAct('whatsapp',{enabled:false})">Выключить</button></div>`
-      : wa.state === "qr" && wa.qr ? `<div class="note">Телефон → WhatsApp → Связанные устройства → Привязать:</div><img src="${wa.qr}" alt="QR-код WhatsApp" style="background:#fff;padding:8px;border-radius:8px;width:220px">`
-      : `<div class="muted">Запуск… ${esc(wa.state || "")}</div>`;
-    conns = `<div><label class="lbl">✉️ Почта</label>${c.email.map((a) => `<div class="li"><span>${esc(a.name)} · ${esc(a.address)}</span><button aria-label="Удалить ящик" onclick="cAct('email_delete',{address:'${esc(a.address)}'})">✕</button></div>`).join("")}
-        <div class="row"><input id="emAddr" placeholder="адрес@gmail.com"><input id="emPwd" type="password" placeholder="пароль приложения"></div>
-        <button class="btn ghost" style="margin-top:6px" onclick="cAct('email_add',{name:v('emAddr'),address:v('emAddr'),password:v('emPwd')})">Подключить ящик</button>
-        <div class="note">Gmail: myaccount.google.com/apppasswords — пароль приложения из 16 букв.</div></div>
-      <div><label class="lbl">✈️ Telegram (ваш аккаунт — чтение чатов)</label>${tgBody}</div>
-      <div><label class="lbl">💬 WhatsApp</label>${waBody}</div>
-      <div><label class="lbl">▶️ YouTube ${c.youtube.has_key ? "· ключ сохранён" : ""}</label><div class="row"><input id="ytCh" value="${esc(c.youtube.channels.join(", "))}" placeholder="@канал"><input id="ytKey" type="password" placeholder="API-ключ"></div>
-        <button class="btn ghost" style="margin-top:6px" onclick="cAct('youtube',{channels:v('ytCh').split(','),api_key:v('ytKey')})">Сохранить</button></div>
-      <div><label class="lbl">📅 Календарь iCal · подключено: ${c.calendar.count}</label><div class="row"><input id="calUrl" type="password" placeholder="секретная ссылка .ics"><button class="btn ghost" onclick="cAct('calendar_add',{url:v('calUrl')})">Добавить</button></div></div>`;
-  }
-  $("#setBody").innerHTML = sec("secKeys", "Ключи API", keys) + sec("secPersona", "Характер", persona) + sec("secLook", "Внешний вид", look) +
-    sec("secVoice", "Голос", voice) + sec("secBot", "Telegram-бот", bot) + sec("secModes", "Режимы и функции", modes) + sec("secConn", "Подключения", conns);
+async function loadState() {
+  try {
+    S = await api("/api/state");
+    HISTORY = S.history || [];
+    GAME = !!S.game?.on;
+    setStatus(S.status);
+    renderTasks(); renderReminders(); renderSummary();
+    const last = HISTORY.slice().reverse().find((m) => m.role !== "user");
+    if (last && $("#him").dataset.locked !== "1") $("#him").textContent = last.text;
+  } catch {}
 }
 
-// ================= first run =================
-let onbStep = 0;
-function renderOnb() {
-  if (!V) return;
-  const k = V.keys, steps = `<div class="steps">${[0, 1, 2].map((i) => `<i class="${i <= onbStep ? "on" : ""}"></i>`).join("")}</div>`;
-  const pages = [
-    `<h2 id="onbTitle">Добро пожаловать, сэр</h2>
-     <div class="note" style="font-size:14px">Два бесплатных ключа — и Джарвис работает в облаке, не занимая видеокарту. Можно пропустить и добавить позже в ⚙.</div>
-     <div><label class="lbl">Groq — речь и мозг · <a href="https://console.groq.com/keys" target="_blank">console.groq.com/keys</a> ${keyState(k.groq)}</label>
-       <div class="keyrow"><input id="oGroq" type="password" placeholder="gsk_…" autocomplete="off"><button class="btn" onclick="saveKey('groq','oGroq')">Сохранить</button></div></div>
-     <div><label class="lbl">Gemini — зрение и перевод экрана · <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> ${keyState(k.gemini)}</label>
-       <div class="keyrow"><input id="oGem" type="password" placeholder="AIza…" autocomplete="off"><button class="btn" onclick="saveKey('gemini','oGem')">Сохранить</button></div></div>`,
-    `<h2 id="onbTitle">Характер и голос</h2>
-     <div class="row" style="flex-wrap:wrap">${PERSONAS.map(([id, t]) => `<button class="btn ${V.persona === id ? "" : "ghost"}" onclick="setPersona('${id}')">${t}</button>`).join("")}</div>
-     <div><label class="lbl">Синтезатор</label><select onchange="setVal('voice','tts_engine_ru',this.value)">
-       <option value="piper" ${V.voice?.engine === "piper" ? "selected" : ""}>Piper — офлайн, мгновенно</option>
-       <option value="edge" ${V.voice?.engine === "edge" ? "selected" : ""}>Microsoft Neural — живее, нужен интернет</option></select></div>
-     <div class="row"><button class="btn ghost" onclick="api('/api/say','POST',{text:'Привет, сэр. Что будем делать?'})">▶ Послушать</button>
-       <button class="btn ghost" onclick="api('/api/voice/enroll','POST');toast('Читайте текст в карточке справа')">🎙 Запомнить мой голос</button></div>
-     <div class="note">«Запомнить мой голос» — 20 секунд чтения вслух. После этого Джарвис слушается только вас и его можно перебить.</div>`,
-    `<h2 id="onbTitle">Внешний вид</h2>
-     <div class="swatches">${Object.entries(ACCENTS).map(([id, rgb]) => `<button class="${V.ui.accent === id ? "on" : ""}" style="background:rgb(${rgb});color:rgb(${rgb})" aria-label="${ACCENT_NAMES[id]}" title="${ACCENT_NAMES[id]}" onclick="setVal('ui','accent','${id}')"></button>`).join("")}</div>
-     <div><label class="lbl">Свой фон: видео .mp4/.webm или картинка (необязательно)</label><input type="file" accept="video/mp4,video/webm,image/*" onchange="uploadBg(this)" style="padding:6px"></div>
-     <div class="note">Подсказки: скажите «Эй, Джарвис». Начните печатать в любом месте окна. «/» — разделы. Ctrl+Alt+Space — капсула поверх игр.</div>`,
-  ];
-  $("#onbBody").innerHTML = steps + pages[onbStep] + `<div class="nav">
-      <button class="btn ghost" onclick="${onbStep ? "onbGo(-1)" : "onbDone()"}">${onbStep ? "Назад" : "Пропустить"}</button>
-      <button class="btn" onclick="${onbStep < 2 ? "onbGo(1)" : "onbDone()"}">${onbStep < 2 ? "Дальше" : "Готово"}</button></div>`;
-}
-window.onbGo = (d) => { onbStep = Math.max(0, Math.min(2, onbStep + d)); renderOnb(); };
-window.onbDone = async () => { $("#onb").hidden = true; await api("/api/settings", "POST", { section: "ui", key: "onboarded", value: true }); toast("Готово, сэр"); };
-function maybeOnboard() { if (V && !V.onboarded && $("#onb").hidden) { $("#onb").hidden = false; renderOnb(); } else if (!$("#onb").hidden) renderOnb(); }
-
-// ================= keyboard =================
-addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeAll(); q.blur(); q.value = ""; renderSugg(); return; }
-  if (e.ctrlKey && e.key.toLowerCase() === "k") { e.preventDefault(); q.focus(); return; }
-  if (e.ctrlKey && e.key.toLowerCase() === "h") { e.preventDefault(); openDrawer("history"); return; }
-  if (e.ctrlKey && e.key === ",") { e.preventDefault(); openDrawer("settings"); return; }
-  const typing = document.activeElement && ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName);
-  if (!typing && !e.ctrlKey && !e.altKey && !e.metaKey && e.key.length === 1) q.focus();
-});
-
-// ================= data & live events =================
-async function loadV3() { V = await api("/api/v3"); applyLook(); renderHeader(); renderSettings(); maybeOnboard(); }
-async function loadState() { state = await api("/api/state"); history = state.history || []; game = !!state.game?.on; setStatus(state.status); renderTasks(); }
-let refreshT;
-function refreshSoon() { clearTimeout(refreshT); refreshT = setTimeout(async () => { const h = history; await loadState(); history = h; }, 250); }
-const AUTO_CARD = { "tasks.json": "tasks", "notes.md": "notes", "reminders.json": "reminders" };
+/* ============ LIVE EVENTS ============ */
 function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
-    if (ev.type === "level") { lvTarget = Math.min(1, ev.v / 1400); if (ev.s !== status) setStatus(ev.s); }
+    if (ev.type === "level") { LV_T = Math.min(1, ev.v / 1400); if (ev.s !== STATUS) setStatus(ev.s); }
     else if (ev.type === "status") setStatus(ev.state);
     else if (ev.type === "message") {
-      history.push(ev); if (history.length > 200) history.shift();
-      sub(ev.role, ev.text); if (ev.role === "user") lastAct = Date.now();
-      if ($("#history").classList.contains("open")) renderHistory();
+      HISTORY.push(ev); if (HISTORY.length > 200) HISTORY.shift();
+      showExchange(ev.role, ev.text);
+      if (!$("#panelHist").hidden) renderHistory();
     }
-    else if (ev.type === "heard" && !ev.ok) { $("#you").textContent = "не разобрал: " + ev.text; $("#you").classList.remove("fade"); }
-    else if (ev.type === "data") { refreshSoon(); if (AUTO_CARD[ev.file] && Date.now() - lastAct < 15000) setTimeout(() => PANELS[AUTO_CARD[ev.file]](), 400); }
-    else if (ev.type === "settings" || ev.type === "v3" || ev.type === "macros" || ev.type === "focus" || ev.type === "translate_live" || ev.type === "remote") { loadV3(); if (ev.type === "settings") refreshSoon(); }
+    else if (ev.type === "heard" && !ev.ok) { $("#you").textContent = "Не разобрал: " + ev.text; }
+    else if (ev.type === "data") { loadState(); if (["goals.json", "limits.json", "limits_usage.json", "repeats.json"].includes(ev.file)) loadGoals(); }
+    else if (ev.type === "settings" || ev.type === "v3" || ev.type === "focus" || ev.type === "remote") { loadV3(); if (ev.type === "settings") loadState(); }
+    else if (ev.type === "macros") loadMacros();
     else if (ev.type === "reload") location.reload();
-    else if (ev.type === "open") { openDrawer(ev.panel || "settings"); if (ev.section) { openSecs.add(ev.section); store.set("openSecs", [...openSecs]); setTimeout(() => { const d = document.getElementById(ev.section); if (d) { d.open = true; d.scrollIntoView({ behavior: "smooth" }); } }, 700); } }
-    else if (ev.type === "profiles") { if ($("#settings").classList.contains("open")) loadProfiles(); }
-    else if (ev.type === "connections") { if ($("#settings").classList.contains("open")) loadConn(); }
-    else if (ev.type === "game") { game = ev.on; setStatus(); toast(ev.on ? "🎮 Игровой режим: " + ev.name : "Игровой режим выключен"); }
-    else if (ev.type === "cloud" && !ev.ok) { toast("Нет связи с облаком: " + (ev.error || "")); loadV3(); }
-    else if (ev.type === "vision") card("vision", "Смотрю на экран", `<img src="data:image/png;base64,${ev.thumb}" alt="" style="width:100%;border-radius:8px;border:1px solid var(--line);display:block"><div class="chip" style="margin-top:6px">${esc(ev.title)}</div>`, 20000);
-    else if (ev.type === "card") card("c_" + (ev.title || "").replace(/[^0-9a-zа-яё]/gi, "").slice(0, 20), ev.title || "", `<div class="pre">${esc(ev.text)}</div>`, ev.ttl || 0);
-    else if (ev.type === "translation") card("translation", "Перевод · " + (ev.title || "окно"), `<div class="pre">${esc(ev.text)}</div>`, 0);
-    else if (ev.type === "enroll") {
-      if (ev.state === "on") card("enroll", "Запоминаю ваш голос", `<div style="font-size:15px;line-height:1.5">Привет, Джарвис. Сегодня я хочу спокойно закончить дела, а вечером немного поиграть. Напомни мне купить хлеб и позвонить маме. Какая завтра погода? (А теперь тише:) Джарвис, который час?</div>
-        <div style="height:5px;background:rgba(255,255,255,.08);border-radius:3px;margin-top:10px"><div style="height:100%;width:${Math.min(100, Math.round(100 * ev.seconds / ev.need))}%;background:rgb(var(--accent));border-radius:3px"></div></div><div class="chip" style="margin-top:4px">${ev.seconds} из ${ev.need} с речи</div>`, 0);
-      else card("enroll", ev.ok ? "Голос запомнен" : "Не получилось", ev.ok ? "<div>Теперь Джарвис слушается только вас.</div>" : "<div>Мало речи — попробуйте ещё раз.</div>", 9000);
-    }
-    else if (ev.type === "record") { if (ev.state === "on") card("rec", "● Запись", `<div>Идёт запись${ev.seconds ? " · " + ev.seconds + " с" : ""}. Скажите «стоп».</div>`, 0); else { card("rec", "Запись сохранена", `<div class="muted">${esc(ev.name || "")}</div>`, 8000); refreshSoon(); } }
+    else if (ev.type === "open") location.hash = ev.panel === "history" ? "#commands" : "#settings";
+    else if (ev.type === "connections") loadConn();
+    else if (ev.type === "game") { GAME = ev.on; setStatus(); toast(ev.on ? "Игровой режим: " + ev.name : "Игровой режим выключен"); }
+    else if (ev.type === "cloud" && !ev.ok) { toast("Нет связи с облаком"); loadV3(); }
+    else if (ev.type === "enroll") toast(ev.state === "on" ? `Запоминаю голос: ${ev.seconds} из ${ev.need} с` : ev.ok ? "Голос запомнен" : "Мало речи, попробуйте ещё раз");
+    else if (ev.type === "record") toast(ev.state === "on" ? "Идёт запись. Скажите «стоп»" : "Запись сохранена");
   };
   ws.onclose = () => { setStatus("starting"); setTimeout(() => { connect(); loadState(); loadV3(); }, 2000); };
 }
-loadState().then(() => {
-  const last = history.filter((m) => m.role !== "user").slice(-1)[0];
-  if (last) { $("#him").textContent = last.text; $("#him").classList.add("fade"); }
-  connect();
+
+async function pollVitals() {
+  if (document.hidden) return;
+  try {
+    const t = await api("/api/telemetry");
+    if (!V) return;
+    $("#engineLine").title = t.gpu ? `Видеокарта: ${(t.gpu.vram_used / 1024).toFixed(1)} из ${(t.gpu.vram_total / 1024).toFixed(1)} ГБ` : "";
+  } catch {}
+}
+setInterval(pollVitals, 5000);
+
+/* ============ KEYBOARD ============ */
+addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.key.toLowerCase() === "k") { e.preventDefault(); location.hash = "#home"; $("#cmd").focus(); }
+  if (e.ctrlKey && e.key === ",") { e.preventDefault(); location.hash = "#settings"; }
 });
-loadV3();
-setInterval(renderTasks, 60000);
+
+/* ============ START ============ */
+route();
+loadState().then(connect);
+loadV3(); loadGoals();
+setInterval(() => { renderTasks(); renderGoals(); }, 30000);
 </script>
 </body>
 </html>

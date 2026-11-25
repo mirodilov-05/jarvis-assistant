@@ -244,16 +244,16 @@ def handle_text(chat: int, text: str, voice: bool = False) -> None:
     elif cmd == "/run":
         what = text.strip()[4:].strip()
         send(chat, core.route(f"открой {what}", "ru", "телеграм", core.CONFIG) if what else "Напишите: /run telegram")
-    elif cmd in ("/close_game", "закрой игру"):
+    elif cmd == "/close_game" or re.match(r"^закрой (игру|игра)$", low.strip(" .!")):
         game = (_local("/api/state").get("game") or {})
         if not game.get("on"):
             send(chat, "Сейчас игра не запущена.")
         else:
             send(chat, f"Закрыть {game['name']}? Несохранённый прогресс пропадёт.",
                  [[("Да, закрыть", f"kill:{game['name']}"), ("Нет", "no")]])
-    elif cmd in ("/shutdown", "выключи компьютер", "выключи пк"):
+    elif cmd == "/shutdown" or re.match(r"^(выключи|выключить) (компьютер|комп|пк|ноут|ноутбук)$", low.strip(" .!")):
         send(chat, "Выключить компьютер через минуту?", [[("Да, выключить", "shutdown"), ("Нет", "no")]])
-    elif cmd in ("/cancel", "отмена"):
+    elif cmd in ("/cancel", "отмена") or low.strip(" .!") in ("отмени выключение", "отмени перезагрузку"):
         subprocess.run(["shutdown", "/a"], creationflags=subprocess.CREATE_NO_WINDOW)
         send(chat, "Выключение отменено.")
     else:

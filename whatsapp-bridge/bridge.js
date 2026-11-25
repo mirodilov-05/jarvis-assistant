@@ -68,7 +68,12 @@ async function start() {
   });
   sock.ev.on("creds.update", saveCreds);
   sock.ev.on("connection.update", async (u) => {
-    if (u.qr) state = { ...state, state: "qr", qr: await QRCode.toDataURL(u.qr, { margin: 1, width: 280 }) };
+    if (u.qr) {
+      state = { ...state, state: "qr", qr: await QRCode.toDataURL(u.qr, { margin: 4, width: 360 }), qrAt: Date.now() };
+      console.log(new Date().toISOString(), "new QR");
+    }
+    if (u.isNewLogin) console.log(new Date().toISOString(), "scanned: linked, reconnecting");
+    if (u.lastDisconnect) console.log(new Date().toISOString(), "closed", u.lastDisconnect?.error?.output?.statusCode, u.lastDisconnect?.error?.message);
     if (u.connection === "open") {
       state = { state: "connected", qr: null, me: sock.user ? { id: sock.user.id, name: sock.user.name } : null };
     }
@@ -79,7 +84,7 @@ async function start() {
         fs.rmSync(AUTH_DIR, { recursive: true, force: true });
         setTimeout(start, 2000);
       } else {
-        state = { ...state, state: "starting" };
+        state = { ...state, state: "starting", qr: null };   // the old code no longer works: don't show it
         setTimeout(start, 3000);
       }
     }

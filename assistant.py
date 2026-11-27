@@ -25,7 +25,6 @@ import re
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import winsound
@@ -162,6 +161,24 @@ def speakable(text: str) -> str:
 
 OUT_LEVEL = {"v": 0.0}       # loudness of Jarvis's own voice, for the HUD
 
+_SENT_END = re.compile(r"(?<=[.!?…。！？])\s*")
+
+
+def _sentences(text: str, max_len: int = 220) -> list[str]:
+    """Splits speech into sentences (Japanese 。！？ too) and joins short ones, so each piece is quick to make."""
+    out: list[str] = []
+    for s in (p.strip() for p in _SENT_END.split(text or "") if p and p.strip()):
+        while len(s) > max_len * 2:                       # a very long sentence: cut at a comma or a space
+            cut = max(s.rfind("、", 0, max_len), s.rfind(",", 0, max_len), s.rfind(" ", 0, max_len))
+            cut = cut if cut > max_len // 3 else max_len
+            out.append(s[:cut + 1].strip())
+            s = s[cut + 1:].strip()
+        if out and len(out[-1]) + len(s) < max_len:
+            out[-1] = f"{out[-1]} {s}" if not re.search(r"[。！？、]$", out[-1]) else out[-1] + s
+        elif s:
+            out.append(s)
+    return out
+
 
 class Speaker:
     def __init__(self) -> None:
@@ -257,46 +274,124 @@ class Speaker:
                 stream.stop()
             stream.close()
 
-    def _edge(self, text: str, lang: str) -> bool:
+    EDGE_VOICES = {"ru": "ru-RU-DmitryNeural", "uz": "uz-UZ-SardorNeural",
+                   "en": "en-US-AndrewNeural",      # warm, confident: a presenter's voice
+                   "ja": "ja-JP-KeitaNeural"}
+
+    def _edge_synth(self, text: str, voice: str, timeout: float, tries: int) -> bytes | None:
+        """One sentence as MP3 bytes from Microsoft's voices (a short piece: it arrives in about a second)."""
         import edge_tts
+
+        async def go() -> bytes:
+            # The audio of a sentence arrives in ~1.5 s, but closing Microsoft's connection sometimes hangs for long:
+            # once audio has come and then 1.5 s pass with nothing new, the sentence is complete.
+            buf = bytearray()
+            comm = edge_tts.Communicate(text, voice, rate=str(cfg("voice", "edge_rate", "+0%")),
+                                        pitch=str(cfg("voice", "edge_pitch", "+0Hz")))
+            it = comm.stream().__aiter__()
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(it.__anext__(), timeout=1.5 if buf else timeout)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    if buf:
+                        break
+                    raise
+                if chunk["type"] == "audio":
+                    buf.extend(chunk["data"])
+            return bytes(buf)
+        for attempt in range(1, tries + 1):
+            try:
+                data = asyncio.run(go())
+                if data:
+                    return data
+            except Exception as e:  # noqa: BLE001
+                log.warning("edge-tts attempt %d failed (%s)", attempt, type(e).__name__)
+            if attempt < tries:
+                time.sleep(0.3)
+        return None
+
+    def _edge(self, text: str, lang: str) -> bool:
+        """Speaks sentence by sentence: the next one is prepared while the current one plays.
+
+        Before, the whole text was made at once with a 6-second limit: a long Japanese or English slide never fitted,
+        and the Russian Windows voice read it instead (Japanese skipped, English with a Russian accent).
+        """
+        from concurrent.futures import ThreadPoolExecutor
 
         if time.time() < self._edge_off_until:
             return False
-        voice = cfg("voice", f"edge_voice_{lang}") or {"ru": "ru-RU-DmitryNeural", "uz": "uz-UZ-SardorNeural",
-                                                 "en": "en-US-GuyNeural", "ja": "ja-JP-KeitaNeural"}[lang]
-        path = os.path.join(tempfile.gettempdir(), "jarvis_tts.mp3")
-        # Russian has an offline voice (Piper) to fall back on at once, so Edge gets one short try.
-        # Before, two 6-second tries meant a silent pause of up to 12 s on every reply.
-        attempts = (1,) if lang == "ru" else (1, 2)
-        timeout = 1.5 if lang == "ru" else 6
-        for attempt in attempts:
-            try:
-                comm = edge_tts.Communicate(text, voice, rate=str(cfg("voice", "edge_rate", "+0%")),
-                                            pitch=str(cfg("voice", "edge_pitch", "+0Hz")))
-                asyncio.run(asyncio.wait_for(comm.save(path), timeout=timeout))
-                break
-            except Exception as e:  # noqa: BLE001
-                log.warning("edge-tts attempt %d failed (%s)", attempt, type(e).__name__)
-                if attempt == attempts[-1]:
-                    self._edge_off_until = time.time() + 900      # unreliable now: local voice for 15 minutes
-                    return False
-                time.sleep(0.4)
-        import av
+        voice = cfg("voice", f"edge_voice_{lang}") or self.EDGE_VOICES.get(lang, "en-US-AndrewNeural")
+        parts = _sentences(text, 220 if lang != "ja" else 90)
+        if not parts:
+            return True
+        # Russian has an offline voice (Piper) to fall back on at once, so the first sentence gets one short try
+        first_timeout, timeout, tries = (2.5, 8, 1) if lang == "ru" else (12, 12, 2)
         stream = None
+        played = False
+        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="edge")
         try:
-            with av.open(path) as f:
-                rs = av.AudioResampler(format="s16", layout="mono", rate=24000)
-                for frame in f.decode(audio=0):
-                    for fr in rs.resample(frame):
-                        if stream is None:
-                            stream = sd.OutputStream(samplerate=24000, channels=1, dtype="int16", latency="low")
-                            stream.start()
-                        self._write(stream, fr.to_ndarray().reshape(-1).astype(np.int16))
-                    if self._stop.is_set():
-                        break
+            fut = pool.submit(self._edge_synth, parts[0], voice, first_timeout, tries)
+            for i in range(len(parts)):
+                data = fut.result()
+                if i + 1 < len(parts):
+                    fut = pool.submit(self._edge_synth, parts[i + 1], voice, timeout, tries)
+                if not data:
+                    if not played:
+                        self._edge_off_until = time.time() + 300      # unreliable now: the local voice for 5 minutes
+                        return False
+                    continue                                          # one lost sentence: go on with the next
+                stream = self._play_mp3(data, stream)
+                played = True
+                if self._stop.is_set():
+                    break
         finally:
+            pool.shutdown(wait=False, cancel_futures=True)
             self._close(stream)
         return True
+
+    def _play_mp3(self, data: bytes, stream):
+        import io
+
+        import av
+        with av.open(io.BytesIO(data)) as f:
+            rs = av.AudioResampler(format="s16", layout="mono", rate=24000)
+            for frame in f.decode(audio=0):
+                for fr in rs.resample(frame):
+                    if stream is None:
+                        stream = sd.OutputStream(samplerate=24000, channels=1, dtype="int16", latency="low")
+                        stream.start()
+                    self._write(stream, fr.to_ndarray().reshape(-1).astype(np.int16))
+                if self._stop.is_set():
+                    break
+        return stream
+
+    _SAPI_LANG = {"en": ("409", "809"), "ja": ("411",), "ru": ("419",)}
+
+    def _sapi_lang(self, sapi, text: str, lang: str) -> bool:
+        """A Windows voice of THAT language. Never the Russian voice for English or Japanese: it mangles them."""
+        if lang == "ru":
+            self._sapi(sapi, text)
+            return True
+        codes = self._SAPI_LANG.get(lang, ())
+        voices = sapi.GetVoices()
+        for i in range(voices.Count):
+            item = voices.Item(i)
+            try:
+                lcids = str(item.GetAttribute("Language")).lower().split(";")
+            except Exception:  # noqa: BLE001
+                continue
+            if any(c in lcids for c in codes):
+                keep = sapi.Voice
+                sapi.Voice = item
+                try:
+                    self._sapi(sapi, text)
+                finally:
+                    sapi.Voice = keep
+                return True
+        log.warning("No voice for %s: the Microsoft voices need the internet, and Windows has no %s voice installed", lang, lang)
+        return False
 
     def _sapi(self, voice, text: str) -> None:
         voice.Speak(text, 1)
@@ -340,7 +435,7 @@ class Speaker:
                 elif engine == "edge":
                     done = self._edge(text, lang) or (lang == "ru" and self._piper_say(text))
                 if not done:
-                    self._sapi(sapi, re.sub(r"[ʻʼ’‘`]", "'", text))
+                    self._sapi_lang(sapi, re.sub(r"[ʻʼ’‘`]", "'", text), lang if lang in ("en", "ja") else "ru")
             except Exception:  # noqa: BLE001
                 log.exception("TTS failed")
             finally:
@@ -1933,11 +2028,27 @@ def run_server() -> None:
             except Exception:  # noqa: BLE001
                 out["focus"] = {"until": 0, "closed": 0}
             import setup_doctor
-            from cognition import personality, show
+            from cognition import emotion, personality, show
             out.update(first_run=not setup_doctor.wizard_done(), lite=bool(core.setting("ui", "hud_lite", False)),
-                       show=show.public(), stage=personality.stage())
+                       show=show.public(), stage=personality.stage(), emotion=emotion.current())
             return out
         return web.json_response(await asyncio.to_thread(collect))
+
+    async def robot_get(_r):
+        from cognition import emotion
+        return web.json_response(emotion.current())
+
+    async def robot_poke(r):
+        """The robot screen's buttons (pet, praise, joke, scold, sorry, sad): he feels it and says so."""
+        _own_page(r)
+        from cognition import emotion
+        body = await r.json()
+        st, line = emotion.poke(str(body.get("what", "")))
+        if line:
+            core.emit({"type": "message", "role": "jarvis", "text": line, "lang": "ru", "source": "робот"})
+            if body.get("voice", True):
+                speaker.say(line, "ru")
+        return web.json_response({"emotion": st, "say": line})
 
     def _own_page(r) -> None:
         if r.headers.get("X-Jarvis") != "1":       # only this window's own buttons, never another web page
@@ -2341,6 +2452,7 @@ def run_server() -> None:
         web.post("/api/capsule", capsule), web.post("/api/window/hide", window_hide), web.post("/api/say", say), web.post("/api/ui/open", ui_open),
         web.get("/api/state", state), web.post("/api/command", command),
         web.get("/api/history", history_get), web.get("/api/show", show_get), web.get("/api/show/audio/{name}", show_audio),
+        web.get("/api/robot", robot_get), web.post("/api/robot/poke", robot_poke),
         web.get("/api/pc-profile", pc_profile_get), web.post("/api/pc-scan", pc_scan_post),
         web.get("/api/pc-index", pc_index_get), web.post("/api/pc-index", pc_index_post),
         web.get("/api/activity", activity_get), web.get("/api/programs", programs_get),

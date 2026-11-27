@@ -731,6 +731,13 @@ def process(text: str, lang: str, source: str) -> str:
     except Exception as e:  # noqa: BLE001
         log.exception("route failed for %r", text)
         reply = f"Не получилось: {e}" if lang == "ru" else f"Bo'lmadi: {e}"
+    try:   # the robot's feelings: rudeness hurts, praise pleases; in the robot mode he says so first
+        from cognition import emotion
+        line = emotion.react(text, reply)
+        if line and setting("ui", "robot_mode", False) and lang == "ru":
+            reply = f"{line} {reply}".strip()
+    except Exception:  # noqa: BLE001
+        log.exception("emotion failed")
     _after_turn(text, reply, source, corrected)
     try:
         log_exchange(source, lang, text, reply)

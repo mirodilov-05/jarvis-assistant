@@ -179,28 +179,60 @@ def switch(lang: str, deck: str | None = None) -> dict:
     return public()
 
 
-EDGE_VOICES = {"ru": "ru-RU-DmitryNeural", "en": "en-US-GuyNeural", "ja": "ja-JP-KeitaNeural"}
+EDGE_VOICES = {"ru": "ru-RU-DmitryNeural", "en": "en-US-AndrewNeural", "ja": "ja-JP-KeitaNeural"}
+
+
+def _synth(text: str, voice: str, rate: str = "-4%") -> bytes:
+    """One slide's speech as MP3. Audio comes in ~1.5 s, but the connection sometimes hangs on closing:
+    once audio has arrived and 1.5 s pass with nothing new, the piece is complete."""
+    import asyncio
+
+    import edge_tts
+
+    async def go() -> bytes:
+        buf = bytearray()
+        it = edge_tts.Communicate(text, voice, rate=rate).stream().__aiter__()
+        while True:
+            try:
+                chunk = await asyncio.wait_for(it.__anext__(), timeout=1.5 if buf else 15)
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
+                if buf:
+                    break
+                raise
+            if chunk["type"] == "audio":
+                buf.extend(chunk["data"])
+        return bytes(buf)
+    for attempt in range(3):
+        try:
+            data = asyncio.run(go())
+            if data:
+                return data
+        except Exception:  # noqa: BLE001
+            if attempt == 2:
+                raise
+            time.sleep(0.5)
+    return b""
 
 
 def export_audio(lang: str = "ru", deck: str = "about", out_dir: Path | None = None) -> Path:
-    """The whole presentation as one MP3 file (Microsoft voices, needs the internet). Returns the file path."""
-    import asyncio
-
+    """The whole presentation as one MP3 file, slide by slide, in a presenter's pace (Microsoft voices, needs the
+    internet). MP3 pieces simply follow one another in the file. Returns the file path."""
     import core
-    import edge_tts
     lang = lang if lang in LANGS else "ru"
     deck = deck if deck in DECKS else "about"
-    text = "\n\n".join(s.get("say", "") for s in _deck(deck, lang) if s.get("say"))
     voice = core.setting("voice", f"edge_voice_{lang}", "") or EDGE_VOICES[lang]
     out = (out_dir or core.DATA / "media")
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"jarvis_{deck}_{lang}.mp3"
     tmp = path.with_suffix(".part")
-
-    async def run():
-        await edge_tts.Communicate(text, voice).save(str(tmp))
-    asyncio.run(run())
-    if not tmp.exists() or tmp.stat().st_size < 1000:
+    with tmp.open("wb") as f:
+        for slide in _deck(deck, lang):
+            if slide.get("say"):
+                f.write(_synth(slide["say"], voice))
+    if tmp.stat().st_size < 1000:
+        tmp.unlink(missing_ok=True)
         raise RuntimeError("голос Microsoft не ответил (нужен интернет)")
     tmp.replace(path)
     return path

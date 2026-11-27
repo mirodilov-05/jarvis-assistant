@@ -27,15 +27,16 @@ def _tg():
     return sys.modules.get("jarvis_plugin_telegram")
 
 
-def _reply(client, text: str) -> None:
-    client.send_message("me", "🤖 Джарвис: " + text[:3900])
+def _reply(text: str) -> None:
+    tg = _tg()
+    tg.run(lambda c: c.send_message("me", "🤖 Джарвис: " + text[:3900]), timeout=30)
 
 
-def _setup_bot(client, me, token: str) -> str:
+def _setup_bot(me_id: int, token: str) -> str:
     import connections
     import remote_bot
     connections.set_secret("telegram_bot:token", token)
-    core.save_setting("remote", "owner_id", int(me.id))       # it came from your own account: you are the owner
+    core.save_setting("remote", "owner_id", int(me_id))       # it came from your own account: you are the owner
     core.save_setting("remote", "enabled", True)
     remote_bot.restart()
     for _ in range(20):
@@ -51,44 +52,47 @@ def _setup_bot(client, me, token: str) -> str:
     return f"Токен сохранён, но бот не запустился: {st['error'] or 'нет ответа от Telegram'}. Проверьте токен у @BotFather."
 
 
+def _fetch() -> tuple[int, list[tuple[int, str]]] | None:
+    """Your id and the last messages of «Избранное», read on the one shared Telegram client."""
+    async def go(c):
+        if not await c.is_user_authorized():
+            return None
+        me = await c.get_me()
+        msgs = await c.get_messages("me", limit=8)
+        return int(me.id), [(int(m.id), (m.message or "").strip()) for m in msgs]
+    return _tg().run(go, timeout=30)
+
+
 def check_once() -> None:
     tg = _tg()
     if not tg or not tg.connected():
         return
     with _lock:
-        client = tg._client()
-        client.connect()
-        try:
-            if not client.is_user_authorized():
-                return
-            _check(client)
-        finally:
-            client.disconnect()
+        got = _fetch()
+        if got:
+            _check(*got)
 
 
-def _check(client) -> None:
-    if True:
-        me = client.get_me()
-        msgs = client.get_messages("me", limit=8)
-        seen = int(core.setting("remote", "saved_seen", 0) or 0)
-        if not seen:      # first run: start from now, never touch old messages
-            core.save_setting("remote", "saved_seen", max((m.id for m in msgs), default=1))
-            return
-        for m in sorted((m for m in msgs if m.id > seen), key=lambda m: m.id):
-            core.save_setting("remote", "saved_seen", m.id)
-            text = (m.message or "").strip()
-            if not text or text.startswith("🤖"):
-                continue
-            tok = TOKEN_RE.search(text)
-            if tok:
-                core.log.info("Bot token received from the owner's Saved Messages")
-                _reply(client, _setup_bot(client, me, tok.group(1)))
-            elif re.match(r"^(?:джарвис|jarvis)\b", text, re.I):
-                cmd = re.sub(r"^(?:джарвис|jarvis)[,!\s]*", "", text, flags=re.I)
-                core.emit({"type": "message", "role": "user", "text": "📱 " + text, "lang": "ru", "source": "телеграм"})
-                reply = core.process(cmd, "ru", "телеграм") or "Готово."
-                core.emit({"type": "message", "role": "jarvis", "text": reply, "lang": "ru", "source": "телеграм"})
-                _reply(client, reply)
+def _check(me_id: int, msgs: list[tuple[int, str]]) -> None:
+    """New messages only; the commands run here, outside the Telegram thread, so a command may use Telegram too."""
+    seen = int(core.setting("remote", "saved_seen", 0) or 0)
+    if not seen:      # first run: start from now, never touch old messages
+        core.save_setting("remote", "saved_seen", max((i for i, _ in msgs), default=1))
+        return
+    for mid, text in sorted((m for m in msgs if m[0] > seen), key=lambda m: m[0]):
+        core.save_setting("remote", "saved_seen", mid)
+        if not text or text.startswith("🤖"):
+            continue
+        tok = TOKEN_RE.search(text)
+        if tok:
+            core.log.info("Bot token received from the owner's Saved Messages")
+            _reply(_setup_bot(me_id, tok.group(1)))
+        elif re.match(r"^(?:джарвис|jarvis)\b", text, re.I):
+            cmd = re.sub(r"^(?:джарвис|jarvis)[,!\s]*", "", text, flags=re.I)
+            core.emit({"type": "message", "role": "user", "text": "📱 " + text, "lang": "ru", "source": "телеграм"})
+            reply = core.process(cmd, "ru", "телеграм") or "Готово."
+            core.emit({"type": "message", "role": "jarvis", "text": reply, "lang": "ru", "source": "телеграм"})
+            _reply(reply)
 
 
 @core.on_start

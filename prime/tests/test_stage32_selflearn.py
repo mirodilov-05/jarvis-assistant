@@ -228,10 +228,10 @@ def test_the_about_deck_is_complete_in_three_languages():
     import hud_data
     for lang in ("ru", "en", "ja"):
         d = hud_data.about_deck(lang)
-        check(f"{lang}: ten slides, each with a title, a headline and a spoken text",
-              len(d) == 10 and all(s.get("title") and s.get("big") and s.get("say") for s in d))
+        check(f"{lang}: twelve slides, each with a title, a headline and a spoken text",
+              len(d) == 12 and all(s.get("title") and s.get("big") and s.get("say") for s in d))
     ru = " ".join(s["say"] for s in hud_data.about_deck("ru"))
-    check("the Russian text is about Jarvis himself", "Меня зовут Джарвис" in ru and "учусь" in " ".join(" ".join(s.get("points", [])) for s in hud_data.about_deck("ru")).lower())
+    check("the Russian text is about Jarvis himself", "Меня зовут Джарвис" in ru and "учусь" in ru)
     ja = "".join(s["say"] for s in hud_data.about_deck("ja"))
     check("the Japanese text is Japanese", "ジャービス" in ja and not re.search(r"[а-яА-Я]", ja))
 

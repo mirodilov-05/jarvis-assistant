@@ -1,5 +1,6 @@
 """Voice for the cognitive layer: memory facts, documents, the network shield, the VPN, the presentation, the character."""
 import re
+import sys
 import threading
 
 import core
@@ -203,77 +204,159 @@ def vpn_switch(ctx: Ctx) -> str:
 
 # ---------------------------------------------------------------- presentation
 
-def _say_slide() -> str:
-    text = show.say_current()
-    if text:
-        threading.Thread(target=core.speak, args=(text, show.public()["lang"]), daemon=True).start()
-    return text
+_LANG_WORDS = (("японск", "ja"), ("англий", "en"), ("русск", "ru"))
+_AUDIO = re.compile(r"аудио|mp3|мп3|звуков\w* файл|в файл|запиши в|сохрани")
+
+
+def _lang_of(text: str, default: str = "ru") -> str:
+    low = text.lower()
+    return next((code for word, code in _LANG_WORDS if word in low), default)
+
+
+def _bring_window() -> None:
+    """The slides are on the screen: show the Jarvis window even if it was hidden in the tray."""
+    fn = getattr(sys.modules.get("__main__"), "open_app_window", None)
+    if fn:
+        threading.Thread(target=fn, daemon=True, name="show-window").start()
+
+
+def _active() -> bool:
+    return bool(show.public()["active"])
+
+
+def _audio(deck: str, lang: str) -> str:
+    names = {"ru": "русском", "en": "английском", "ja": "японском"}
+    try:
+        path = show.export_audio(lang, deck)
+    except Exception as e:  # noqa: BLE001
+        return f"Аудиофайл не получился: {e}."
+    import subprocess
+    subprocess.Popen(["explorer", "/select,", str(path)])
+    return f"Готово. Аудиофайл презентации на {names[lang]} сохранён: {path.name}. Открыл папку с ним."
+
+
+@skill(
+    "show.about",
+    title={"ru": "Самопрезентация: Джарвис рассказывает о себе на весь экран"},
+    patterns={"ru": [r"самопрезент\w*",
+                     r"(?:презентуй|представь|покажи|опиши) себя",
+                     r"расскажи (?:\w+ )?(?:всё |все |подробно |полностью )?о себе",
+                     r"презентаци\w* (?:о себе|себя|про себя|о джарвисе|джарвиса)",
+                     r"(?:свою|твою) презентаци\w*",
+                     r"^(?:джарвис )?(?:начни|запусти|покажи|включи|сделай)(?: полную| полноценную)? презентацию$",
+                     r"^(?:джарвис )?режим презентации$",
+                     r"презентаци\w*.*(?:аудио|mp3)", r"(?:аудио|mp3)\w*.*презентаци\w*"]},
+    examples={"ru": ["Самопрезентация", "Расскажи о себе на японском", "Сохрани самопрезентацию в аудиофайл"]},
+    priority=4,
+)
+def show_about(ctx: Ctx) -> str:
+    lang = _lang_of(ctx.text)
+    if _AUDIO.search(ctx.norm) and re.search(r"аудио|mp3|мп3|файл", ctx.norm):
+        return _audio("about", lang)
+    show.start(lang, "about", auto=True)          # reads itself slide by slide; the screen follows
+    _bring_window()
+    return ""                                     # the first slide is the answer: it is being read out now
 
 
 @skill(
     "show.start",
-    title={"ru": "Начать презентацию голосом"},
-    patterns={"ru": [r"^(?:джарвис )?(?:режим презентации|начни доклад|начни презентацию|начни показ)$"]},
+    title={"ru": "Отчёт за месяц на весь экран"},
+    patterns={"ru": [r"^(?:джарвис )?(?:начни|запусти|покажи) (?:доклад|отч[её]т)(?: за месяц)?$",
+                     r"^(?:джарвис )?(?:доклад|отч[её]т) за месяц$"]},
     examples={"ru": ["Начни доклад"]},
-    priority=5,
+    priority=4,
 )
 def show_start(ctx: Ctx) -> str:
-    st = show.start("ru")
-    _say_slide()
-    return f"Презентация, слайд 1 из {st['total']}."
+    if _AUDIO.search(ctx.norm) and re.search(r"аудио|mp3|мп3|файл", ctx.norm):
+        return _audio("report", _lang_of(ctx.text))
+    show.start(_lang_of(ctx.text), "report", auto=True)
+    _bring_window()
+    return ""
 
 
 @skill(
     "show.next",
     title={"ru": "Следующий слайд"},
-    patterns={"ru": [r"^(?:джарвис )?следующий слайд$", r"^(?:джарвис )?дальше$"]},
+    patterns={"ru": [r"^(?:джарвис )?(?:следующий слайд|дальше|далее|следующий)$"]},
     examples={"ru": ["Следующий слайд"]},
     priority=5,
 )
-def show_next(ctx: Ctx) -> str:
-    st = show.step(1)
-    if not st["active"]:
-        return "Презентация не запущена. Скажите: начни доклад."
-    _say_slide()
-    return f"Слайд {st['i'] + 1} из {st['total']}."
+def show_next(ctx: Ctx) -> str | None:
+    if not _active():
+        return None if ctx.norm.strip() in ("дальше", "далее", "следующий") else "Презентация не запущена. Скажите: самопрезентация."
+    show.step(1, speak=True)
+    return ""
 
 
 @skill(
     "show.prev",
     title={"ru": "Предыдущий слайд"},
-    patterns={"ru": [r"^(?:джарвис )?предыдущий слайд$", r"^(?:джарвис )?назад слайд$"]},
+    patterns={"ru": [r"^(?:джарвис )?(?:предыдущий слайд|назад слайд|слайд назад|вернись назад)$"]},
     examples={"ru": ["Предыдущий слайд"]},
     priority=5,
 )
-def show_prev(ctx: Ctx) -> str:
-    st = show.step(-1)
-    if not st["active"]:
-        return "Презентация не запущена."
-    _say_slide()
-    return f"Слайд {st['i'] + 1} из {st['total']}."
+def show_prev(ctx: Ctx) -> str | None:
+    if not _active():
+        return None
+    show.step(-1, speak=True)
+    return ""
+
+
+@skill(
+    "show.say",
+    title={"ru": "Повторить текущий слайд"},
+    patterns={"ru": [r"^(?:джарвис )?(?:повтори|прочитай|скажи) (?:этот |текущий )?слайд$"]},
+    examples={"ru": ["Повтори слайд"]},
+    priority=5,
+)
+def show_say(ctx: Ctx) -> str | None:
+    if not _active():
+        return None
+    show.say_current()
+    return ""
+
+
+@skill(
+    "show.play",
+    title={"ru": "Презентация читает себя сама или пауза"},
+    patterns={"ru": [r"^(?:джарвис )?(?P<a>читай сам|показывай сам|продолжай показ|продолжи|продолжай|автопоказ|пауза|"
+                     r"останови показ|подожди)$"]},
+    examples={"ru": ["Читай сам", "Пауза"]},
+    priority=5,
+)
+def show_play(ctx: Ctx) -> str | None:
+    if not _active():
+        return None                                # «пауза» / «продолжи» stay the music commands
+    if ctx.match.group("a") in ("пауза", "останови показ", "подожди"):
+        show.pause()
+        return "Пауза. Скажите «продолжай», и я продолжу."
+    show.play()
+    return ""
 
 
 @skill(
     "show.lang",
     title={"ru": "Переключить язык презентации"},
-    patterns={"ru": [r"^(?:джарвис )?переключись на (?P<l>японский|английский|русский)(?: язык)?$"]},
+    patterns={"ru": [r"^(?:джарвис )?(?:переключись|переключи презентацию|перейди|давай) на (?P<l>японский|английский|русский)(?: язык)?$"]},
     examples={"ru": ["Переключись на японский"]},
     priority=5,
 )
-def show_lang(ctx: Ctx) -> str:
+def show_lang(ctx: Ctx) -> str | None:
     code = {"японский": "ja", "английский": "en", "русский": "ru"}[ctx.match.group("l")]
-    if not show.public()["active"]:
-        show.start(code)
-    else:
-        show.switch(code)
-    _say_slide()
-    return "Переключил."
+    if not _active():
+        show.start(code, "about", auto=True)
+        _bring_window()
+        return ""
+    st = show.switch(code)
+    if not st["auto"]:
+        show.say_current()
+    return ""
 
 
 @skill(
     "show.stop",
     title={"ru": "Закончить презентацию"},
-    patterns={"ru": [r"^(?:джарвис )?(?:закончи|заверши|выйди из) (?:презентацию|доклад|показ)$"]},
+    patterns={"ru": [r"^(?:джарвис )?(?:закончи|заверши|выйди из|закрой|останови) (?:презентацию|доклад|показ|самопрезентацию)$"]},
     examples={"ru": ["Закончи презентацию"]},
     priority=5,
 )

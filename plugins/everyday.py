@@ -46,25 +46,29 @@ def browser_window() -> int | None:
     if exe in pcx.BROWSERS:
         return hwnd
     u32 = ctypes.windll.user32
-    found: list[int] = []
+    found: list[tuple[bool, int]] = []
 
     def cb(h, _l):
-        if u32.IsWindowVisible(h) and not u32.IsIconic(h) and u32.GetWindowTextLengthW(h):
+        if u32.IsWindowVisible(h) and u32.GetWindowTextLengthW(h):
             pid = ctypes.c_ulong()
             u32.GetWindowThreadProcessId(h, ctypes.byref(pid))
             try:
                 import psutil
                 if psutil.Process(pid.value).name().lower() in pcx.BROWSERS:
-                    found.append(h)
+                    found.append((bool(u32.IsIconic(h)), h))     # a minimised browser counts too, after the open ones
             except Exception:  # noqa: BLE001
                 pass
         return True
     u32.EnumWindows(ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(cb), 0)
-    return found[0] if found else None
+    found.sort(key=lambda x: x[0])
+    return found[0][1] if found else None
 
 
 def to_front(hwnd: int) -> None:
     u32 = ctypes.windll.user32
+    if u32.IsIconic(hwnd):
+        u32.ShowWindow(hwnd, 9)          # SW_RESTORE: a minimised browser comes back first
+        time.sleep(0.2)
     if u32.GetForegroundWindow() == hwnd:
         return
     u32.keybd_event(0x12, 0, 0, 0)      # a tap of Alt lets a background app bring a window forward

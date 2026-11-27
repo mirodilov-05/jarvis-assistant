@@ -86,8 +86,7 @@ def _check(client) -> None:
             elif re.match(r"^(?:джарвис|jarvis)\b", text, re.I):
                 cmd = re.sub(r"^(?:джарвис|jarvis)[,!\s]*", "", text, flags=re.I)
                 core.emit({"type": "message", "role": "user", "text": "📱 " + text, "lang": "ru", "source": "телеграм"})
-                reply = core.route(cmd, "ru", "телеграм", core.CONFIG) or "Готово."
-                reply = core.styled(reply, "ru")
+                reply = core.process(cmd, "ru", "телеграм") or "Готово."
                 core.emit({"type": "message", "role": "jarvis", "text": reply, "lang": "ru", "source": "телеграм"})
                 _reply(client, reply)
 

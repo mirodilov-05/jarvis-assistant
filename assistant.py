@@ -352,7 +352,16 @@ class Speaker:
 
 
 speaker = Speaker()
-core.set_speaker(speaker.say)
+core.set_speaker(speaker.say, stop=speaker.stop, busy=lambda: speaker.speaking.is_set() or not speaker._q.empty())
+
+
+def _stop_show() -> None:
+    """«Стоп» also stops a presentation that is reading itself out loud."""
+    try:
+        from cognition import show
+        show.pause()
+    except Exception:  # noqa: BLE001
+        log.exception("presentation pause failed")
 
 
 # ---------------------------------------------------------------------------
@@ -1400,50 +1409,21 @@ def _record(event: dict) -> None:
 core.subscribe(_record)
 
 
-def _note_correction(text: str) -> bool:
-    """«Нет, я имел в виду…»: the previous exchange is stored as a correction, for the nightly lessons."""
-    try:
-        from learning import correction_detector, store
-        hit = correction_detector.detect(text)
-        last = core.read_history(1)
-        if hit and last:
-            store.add_feedback(last[-1].get("user", ""), last[-1].get("reply", ""), rating=-1,
-                               skill=last[-1].get("skill", ""), comment="поправка", severity=hit["severity"])
-            return True
-    except Exception:  # noqa: BLE001 — learning must never break an answer
-        log.exception("correction note failed")
-    return False
-
-
-def _remember_turn(text: str, reply: str, source: str, corrected: bool) -> None:
-    """The episodic memory: every exchange, with its mood and whether the owner corrected it."""
-    try:
-        from cognition import memory
-        memory.record_turn(text, reply, source, skill=core.LAST_ACTION.get("skill", ""),
-                           valence=-1.0 if corrected else 0.0, mistake=corrected)
-    except Exception:  # noqa: BLE001
-        log.exception("episode not saved")
-
-
 def handle(text: str, lang: str, source: str, speak: bool, echo: bool = True, alive=lambda: True) -> str:
     if echo:
         core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": source})
     if core.normalize(text, lang) in _STOP_WORDS:
         speaker.stop()
+        _stop_show()
         return "Хорошо." if lang == "ru" else "Xo'p."
     t0 = time.time()
-    core.LAST_ACTION.update(skill="", tools="")
-    corrected = _note_correction(text)
-    reply = core.styled(core.route(text, lang, source, core.CONFIG), lang)
-    _remember_turn(text, reply, source, corrected)
+    reply = core.process(text, lang, source)      # history, memory and learning are kept there, for every channel
     log.info("Reply [%s] in %.2fs: %s", lang, time.time() - t0, reply)
     if not alive():          # you interrupted while he was thinking
         log.info("Reply dropped: interrupted")
         speak = False
     if source != "голос":
         core.FOLLOWUP.clear()
-    core.log_exchange(source, lang, text, reply)
-    core.add_history(source, text, reply, lang, "brain" if core.LAST_ACTION.get("tools") else "skill" if core.LAST_ACTION.get("skill") else "rules")
     core.emit({"type": "message", "role": "jarvis", "text": reply, "lang": lang, "source": source})
     if core.mode() == "quiet" and source != "голос-срочно":
         speak = False     # «Тихий» character: answers only on screen
@@ -1503,7 +1483,7 @@ def app_state() -> dict:
         "reminders": sorted(core.load_json(core.DATA / "reminders.json", []), key=lambda r: r["at"]),
         "shortcuts": apps_mod.shortcuts() if apps_mod else {},
         "skills": [{"name": s.name, "module": s.module, "title": s.title, "examples": s.examples} for s in core.SKILLS],
-        "history": list(HISTORY)[-80:],
+        "history": core.read_history(80),          # the saved exchanges (voice, window, Telegram), not just this session
         "settings": {
             "assistant": core.CONFIG.get("assistant", {}),
             "wake": core.CONFIG.get("wake", {}),
@@ -2112,8 +2092,39 @@ def run_server() -> None:
     async def state(_r):
         return web.json_response(await asyncio.to_thread(app_state))
 
-    async def history_get(_r):
-        return web.json_response({"items": await asyncio.to_thread(core.read_history, 200)})
+    async def history_get(r):
+        """The saved history (data/history.jsonl), newest last. ?limit= up to 5000, ?q= filters by words."""
+        try:
+            limit = max(1, min(5000, int(r.query.get("limit", 300))))
+        except ValueError:
+            limit = 300
+        q = r.query.get("q", "").strip().lower()
+
+        def read():
+            rows = core.read_history(100000 if q else limit)
+            if q:
+                rows = [h for h in rows if q in (h.get("user", "") + " " + h.get("reply", "")).lower()][-limit:]
+            total = 0
+            try:
+                with core.HISTORY_FILE.open(encoding="utf-8") as f:
+                    total = sum(1 for line in f if line.strip())
+            except OSError:
+                pass
+            return {"items": rows, "total": total}
+        return web.json_response(await asyncio.to_thread(read))
+
+    async def show_get(_r):
+        from cognition import show
+        return web.json_response(show.public())
+
+    async def show_audio(r):
+        name = r.match_info["name"]
+        if not re.fullmatch(r"jarvis_(?:about|report)_(?:ru|en|ja)\.mp3", name):
+            raise web.HTTPNotFound()
+        path = core.DATA / "media" / name
+        if not path.exists():
+            raise web.HTTPNotFound()
+        return web.FileResponse(path, headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     async def command(r):
         body = await r.json()
@@ -2298,6 +2309,9 @@ def run_server() -> None:
         body = await r.json() if r.can_read_body else {}
         try:
             result = await asyncio.to_thread(connections_action, r.match_info["action"], body)
+        except RuntimeError as e:          # a plain sentence for the owner (e.g. a Telegram login refusal)
+            log.warning("connection action %s: %s", r.match_info["action"], e)
+            result = {"ok": False, "message": str(e)[:400]}
         except Exception as e:  # noqa: BLE001
             log.exception("connection action failed")
             result = {"ok": False, "message": str(e)[:300]}
@@ -2326,7 +2340,7 @@ def run_server() -> None:
         web.get("/api/remote", remote_get), web.post("/api/remote", remote_set),
         web.post("/api/capsule", capsule), web.post("/api/window/hide", window_hide), web.post("/api/say", say), web.post("/api/ui/open", ui_open),
         web.get("/api/state", state), web.post("/api/command", command),
-        web.get("/api/history", history_get),
+        web.get("/api/history", history_get), web.get("/api/show", show_get), web.get("/api/show/audio/{name}", show_audio),
         web.get("/api/pc-profile", pc_profile_get), web.post("/api/pc-scan", pc_scan_post),
         web.get("/api/pc-index", pc_index_get), web.post("/api/pc-index", pc_index_post),
         web.get("/api/activity", activity_get), web.get("/api/programs", programs_get),

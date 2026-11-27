@@ -250,7 +250,7 @@ def handle_text(chat: int, text: str, voice: bool = False) -> None:
         send(chat, status_text())
     elif cmd == "/run":
         what = text.strip()[4:].strip()
-        send(chat, core.route(f"открой {what}", "ru", "телеграм", core.CONFIG) if what else "Напишите: /run telegram")
+        send(chat, core.process(f"открой {what}", "ru", "телеграм") if what else "Напишите: /run telegram")
     elif cmd == "/close_game" or re.match(r"^закрой (игру|игра)$", low.strip(" .!")):
         game = (_local("/api/state").get("game") or {})
         if not game.get("on"):
@@ -265,8 +265,7 @@ def handle_text(chat: int, text: str, voice: bool = False) -> None:
         send(chat, "Выключение отменено.")
     else:
         core.emit({"type": "message", "role": "user", "text": "📱 " + text, "lang": "ru", "source": "телеграм"})
-        reply = core.route(text, "ru", "телеграм", core.CONFIG)
-        reply = core.styled(reply, "ru") if hasattr(core, "styled") else reply
+        reply = core.process(text, "ru", "телеграм")     # kept in the history and the memory, like a voice command
         answer(chat, reply or "Готово.", voice)
         core.emit({"type": "message", "role": "jarvis", "text": reply or "Готово.", "lang": "ru", "source": "телеграм"})
         return

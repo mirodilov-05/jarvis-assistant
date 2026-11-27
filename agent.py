@@ -148,6 +148,18 @@ _CLAIM = re.compile(r"\b(открываю|открою|откроем|закры
                     r"запущу|найд[уё]м|найду|ищу|напомню|записал\w*|запишу|добавил\w*|добавлю|удалил\w*|удалю|отправ\w*|"
                     r"ставлю|поставлю|сделаю|делаю|перенес\w*|перенесу|отмечу|отметил|выключен\w*|включен\w*|открыт\w*|"
                     r"закрыт\w*|запущен\w*|записан\w*|добавлен\w*|поставлен\w*|уже стоит|готово)\b", re.I)
+# A long explanation («я умею: открываю программы, включаю музыку…») is a talk, not a claimed action
+_CLAIM_MAX = 160
+_ABOUT_ME = re.compile(r"\b(?:ты|тебя|тебе|твои|твоё|твое|себя|себе|о себе)\b.*\b(?:умеешь|можешь|функци\w*|возможност\w*|"
+                       r"расскажи|объясни|презент\w*|представ\w*)|самопрезент\w*|что ты так\w*|кто ты", re.I)
+_DETAILED = re.compile(r"подробн\w*|детальн\w*|полностью|полноценн\w*|целиком|всё о|все о", re.I)
+NOT_UNDERSTOOD = "Не понял, что именно сделать, сэр. Скажите по-другому — я запомню, что это значит."
+
+
+def _claims_action(text: str, content: str) -> bool:
+    """The model *says* it did something but called no tool. Only a short reply can be such a claim."""
+    c = (content or "").strip()
+    return bool(c) and len(c) <= _CLAIM_MAX and not c.endswith("?") and not _ABOUT_ME.search(text) and bool(_CLAIM.search(c))
 
 
 # extra words people use for each tool (besides its description)
@@ -296,16 +308,19 @@ def _think(text: str) -> tuple[str, list]:
         import cloud
         try:
             content, calls = _call_cloud(system, messages)
-            if not calls and _CLAIM.search(content or "") and not (content or "").rstrip().endswith("?"):
+            if not calls and _claims_action(text, content):
                 core.log.info("Cloud brain claimed an action without a tool: %r — retrying", content)
                 retry = messages + [{"role": "assistant", "content": content},
                                     {"role": "user", "content": "Ты ничего не сделал — инструмент не вызван. Вызови нужный "
                                                                 "инструмент для моей просьбы. Если не понял, что сделать — "
-                                                                "задай один короткий вопрос."}]
+                                                                "задай один короткий вопрос. Если это был просто ответ "
+                                                                "на вопрос — повтори его без изменений."}]
                 content2, calls2 = _call_cloud(system, retry)
                 if calls2 or (content2 or "").rstrip().endswith("?"):
                     return content2, calls2
-                return "Не понял, что именно сделать, сэр. Скажите по-другому.", []
+                if content2 and not _CLAIM.search(content2):
+                    return content2, []          # it was a plain answer after all
+                return NOT_UNDERSTOOD, []
             return content, calls
         except Exception:  # noqa: BLE001
             core.log.exception("Cloud tool call failed")
@@ -317,7 +332,7 @@ def _think(text: str) -> tuple[str, list]:
         except Exception:  # noqa: BLE001
             core.log.exception("Claude tool call failed, using local model")
     content, calls = _call_local(system, messages)
-    if not calls and _CLAIM.search(content or ""):
+    if not calls and _claims_action(text, content):
         # promised an action in words only: ask again, firmly
         core.log.info("Agent claimed an action without a tool: %r — retrying", content)
         retry = messages + [{"role": "assistant", "content": content},
@@ -326,7 +341,7 @@ def _think(text: str) -> tuple[str, list]:
         content2, calls = _call_local(system, retry)
         if calls:
             return content2, calls
-        return "Не понял, что именно сделать. Скажи по-другому, пожалуйста.", []
+        return NOT_UNDERSTOOD, []
     return content, calls
 
 
@@ -346,13 +361,6 @@ def run(text: str, source: str) -> str | None:
     calls = [(n, a) for n, a in calls if n in tools.TOOLS][:6]
     core.log.info("Agent: %r -> tools %s", text, [n for n, _ in calls] or "none")
     core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
-    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
-    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
-    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
-    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
-    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
-    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
-    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
 
     if not calls:   # plain conversation / knowledge question
         if not core.feature("chat"):
@@ -361,6 +369,8 @@ def run(text: str, source: str) -> str | None:
             return None
         if source == "голос" and llm:
             _tokens, sentences = llm.LIMITS.get(core.mode(), (180, 3))
+            if _DETAILED.search(text):          # «подробно», «полностью»: the owner asked for the whole answer
+                sentences = max(sentences, 12)
             content = llm._short(content, sentences)
             if core.mode() == "friend" or content.rstrip().endswith("?"):
                 core.FOLLOWUP.set()

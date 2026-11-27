@@ -28,10 +28,10 @@
   /* ---------- Tasks ---------- */
   const TASKS = {
     title: "Дела", sub: "Что нужно сделать. Срок — по желанию, напомню заранее.",
-    render(el) { draw(el); },
-    onData(_, force) { if (force || STATE.live === "tasks") draw($("#view")); },
+    render(el) { drawTasks(el); },
+    onData(_, force) { if (force || STATE.live === "tasks") drawTasks($("#view")); },
   };
-  function draw(el) {
+  function drawTasks(el) {
     const st = STATE.state || {};
     const open = (st.tasks || []).filter((t) => !t.done).sort((a, b) => (a.due || "9").localeCompare(b.due || "9"));
     const done = (st.tasks || []).filter((t) => t.done).slice(-8).reverse();
@@ -55,21 +55,21 @@
       e.preventDefault();
       const text = $("#taskText").value.trim(), due = $("#taskDue").value;
       if (!text) return;
-      try { await api("/api/tasks", "POST", { text, due: due ? due + ":00" : null }); toast("Дело добавлено"); await pollSlow(); draw(el); }
+      try { await api("/api/tasks", "POST", { text, due: due ? due + ":00" : null }); toast("Дело добавлено"); await pollSlow(); drawTasks(el); }
       catch (err) { toast(err.message); }
     });
-    el.querySelectorAll("[data-done]").forEach((c) => c.addEventListener("change", async () => { await api(`/api/tasks/${c.dataset.done}`, "PATCH", { done: true }); toast("Отмечено"); await pollSlow(); draw(el); }));
-    el.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => { if (await ask({ title: "Удалить дело?", text: "Дело пропадёт из списка.", yes: "Удалить", danger: true })) { await api(`/api/tasks/${b.dataset.del}`, "DELETE"); await pollSlow(); draw(el); } }));
-    el.querySelectorAll("[data-delrem]").forEach((b) => b.addEventListener("click", async () => { await api(`/api/reminders/${b.dataset.delrem}`, "DELETE"); await pollSlow(); draw(el); }));
+    el.querySelectorAll("[data-done]").forEach((c) => c.addEventListener("change", async () => { await api(`/api/tasks/${c.dataset.done}`, "PATCH", { done: true }); toast("Отмечено"); await pollSlow(); drawTasks(el); }));
+    el.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => { if (await ask({ title: "Удалить дело?", text: "Дело пропадёт из списка.", yes: "Удалить", danger: true })) { await api(`/api/tasks/${b.dataset.del}`, "DELETE"); await pollSlow(); drawTasks(el); } }));
+    el.querySelectorAll("[data-delrem]").forEach((b) => b.addEventListener("click", async () => { await api(`/api/reminders/${b.dataset.delrem}`, "DELETE"); await pollSlow(); drawTasks(el); }));
   }
 
   /* ---------- Goals ---------- */
   const GOALS = {
     title: "Цели", sub: "Маленькие шаги каждый день. Джарвис напомнит утром и вечером.",
-    async render(el) { await draw(el); },
-    onData(_, force) { if (force && STATE.live === "goals") draw($("#view")); },
+    async render(el) { await drawGoals(el); },
+    onData(_, force) { if (force && STATE.live === "goals") drawGoals($("#view")); },
   };
-  async function draw(el) {
+  async function drawGoals(el) {
     let g = { goals: [], limits: [], usage: {} };
     try { g = await api("/api/goals"); } catch (e) { toast(e.message); }
     const goals = g.goals || [];
@@ -93,43 +93,50 @@
     el.querySelector("#goalForm").addEventListener("submit", async (e) => {
       e.preventDefault(); const t = $("#gTitle").value.trim(), n = $("#gStep").value;
       if (!t) return;
-      await hudAct("goal_add", { title: t, per_day: n ? Number(n) : null }); await draw(el);
+      await hudAct("goal_add", { title: t, per_day: n ? Number(n) : null }); await drawGoals(el);
     });
     el.querySelector("#limitForm").addEventListener("submit", async (e) => {
       e.preventDefault(); const a = $("#lApp").value.trim(), m = $("#lMin").value || "60";
       if (!a) return;
-      await api("/api/command", "POST", { text: `ограничь ${a} ${m} минут в день` }); toast("Ограничение добавлено"); await draw(el);
+      await api("/api/command", "POST", { text: `ограничь ${a} ${m} минут в день` }); toast("Ограничение добавлено"); await drawGoals(el);
     });
-    el.querySelectorAll("[data-tick]").forEach((b) => b.addEventListener("click", async () => { await hudAct("goal_mark", { id: b.dataset.tick }); await draw(el); pollHud(); }));
-    el.querySelectorAll("[data-gdel]").forEach((b) => b.addEventListener("click", async () => { if (await ask({ title: "Удалить цель?", text: "Вся история шагов по этой цели пропадёт.", yes: "Удалить", danger: true })) { await hudAct("goal_delete", { id: b.dataset.gdel }); await draw(el); } }));
+    el.querySelectorAll("[data-tick]").forEach((b) => b.addEventListener("click", async () => { await hudAct("goal_mark", { id: b.dataset.tick }); await drawGoals(el); pollHud(); }));
+    el.querySelectorAll("[data-gdel]").forEach((b) => b.addEventListener("click", async () => { if (await ask({ title: "Удалить цель?", text: "Вся история шагов по этой цели пропадёт.", yes: "Удалить", danger: true })) { await hudAct("goal_delete", { id: b.dataset.gdel }); await drawGoals(el); } }));
   }
   const ymd = (d = new Date()) => d.toLocaleDateString("sv-SE");
 
   /* ---------- Commands ---------- */
   const COMMANDS = {
     title: "Команды", sub: "Цепочки из нескольких команд запускаются одной фразой или кнопкой.",
-    async render(el, sub) { await draw(el, sub || "macros"); },
-    onData(_, force) { if (force && STATE.live === "commands") draw($("#view"), "history"); },
+    async render(el, sub) { await drawCommands(el, sub || "macros"); },
+    onData(_, force) { if (force && STATE.live === "commands") drawCommands($("#view"), "history"); },
   };
-  async function draw(el, tab) {
+  let HQ = "";        // the history search
+  async function drawCommands(el, tab) {
     let macros = STATE.macros || { items: [] };
     try { macros = await api("/api/macros"); STATE.macros = macros; } catch { /* keep the last list */ }
-    const hist = (STATE.state?.history || []).slice().reverse();
+    let hist = [], total = 0;
+    if (tab === "history") {   // the saved file, not just this session: voice, window and Telegram alike
+      try { const r = await api(`/api/history?limit=500${HQ ? "&q=" + encodeURIComponent(HQ) : ""}`); hist = (r.items || []).slice().reverse(); total = r.total || 0; }
+      catch (e) { toast(e.message); }
+    }
     el.innerHTML = `<div class="dash-toolbar"><div class="seg" role="tablist"><button type="button" role="tab" data-tab="macros" aria-pressed="${tab === "macros"}">Цепочки</button><button type="button" role="tab" data-tab="history" aria-pressed="${tab === "history"}">История</button></div><span class="spacer"></span><form class="form-row" id="cmdForm" style="flex:0 1 420px"><input type="search" id="cmdIn" placeholder="Быстро: напишите команду Джарвису" aria-label="Команда" style="height:36px"><button class="btn" type="submit">Отправить</button></form></div>
       ${tab === "macros" ? `<div class="grid-2"><div class="stack">${(macros.items || []).map((m) => `<div class="cmd-card"><div class="grow"><b style="font-size:15px">«${esc(m.phrase)}»</b><p>${(m.actions || []).map((a) => esc(a.value)).join(" → ")}</p></div><button class="btn primary" data-run="${esc(m.id)}">Запустить</button><button class="btn sm icon ghost" data-mdel="${esc(m.id)}" aria-label="Удалить">${svg("x")}</button></div>`).join("") || `<div class="empty"><b>Цепочек пока нет</b>Создайте справа или скажите «Джарвис, запомни команду …»</div>`}</div>
         ${panel("Новая цепочка", "Одна команда в строке. Например: «открой ютуб», «громкость 30», «напомни через 25 минут перерыв»", `<form id="macroForm" class="col"><div class="field"><label for="mPhrase">Фраза для запуска</label><input id="mPhrase" type="text" maxlength="60" placeholder="например: вечер дома" required></div><div class="field"><label for="mSteps">Команды</label><textarea id="mSteps" rows="5" placeholder="включи фокус на 25 минут&#10;включи музыку для работы" required></textarea></div><div><button class="btn primary" type="submit">Сохранить цепочку</button></div></form>`)}</div>`
-      : `<div class="panel"><div class="list">${hist.map((h) => `<div class="hist-item"><div class="meta"><span>${esc(h.time || "")}</span><span class="chip">${esc(h.skill || h.tools || "ответ")}</span></div><div class="q">${esc(h.user || "")}</div><div class="a">${esc(h.reply || "")}</div><div class="row" style="gap:6px"><button class="btn sm ghost" data-again="${esc(h.user || "")}">Повторить</button></div></div>`).join("") || `<div class="empty"><b>История пуста</b>Здесь появится каждая команда и ответ</div>`}</div></div>`}`;
-    el.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => draw(el, b.dataset.tab)));
-    el.querySelector("#cmdForm").addEventListener("submit", async (e) => { e.preventDefault(); const t = $("#cmdIn").value.trim(); if (!t) return; $("#cmdIn").value = ""; await JV.sendText(t); toast("Отправлено"); draw(el, tab); });
+      : `<div class="panel"><form class="form-row" id="histSearch" style="margin-bottom:12px"><div class="field grow"><input type="search" id="histQ" value="${esc(HQ)}" placeholder="Поиск по истории: слово из команды или ответа" aria-label="Поиск по истории"></div><button class="btn" type="submit">Найти</button></form><div class="sub" style="margin-bottom:8px">${HQ ? `Найдено: ${hist.length}` : `Показаны последние ${hist.length} из ${total}. Вся история хранится в data/history.jsonl.`}</div><div class="list">${hist.map((h) => `<div class="hist-item"><div class="meta"><span>${esc(h.time || "")}</span><span class="chip">${esc(h.source || "")}</span><span class="chip">${esc(h.skill || h.tools || "ответ")}</span></div><div class="q">${esc(h.user || "")}</div><div class="a">${esc(h.reply || "")}</div><div class="row" style="gap:6px"><button class="btn sm ghost" data-again="${esc(h.user || "")}">Повторить</button></div></div>`).join("") || `<div class="empty"><b>История пуста</b>Здесь появится каждая команда и ответ</div>`}</div></div>`}`;
+    el.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => drawCommands(el, b.dataset.tab)));
+    const hs = el.querySelector("#histSearch");
+    if (hs) hs.addEventListener("submit", (e) => { e.preventDefault(); HQ = $("#histQ").value.trim(); drawCommands(el, "history"); });
+    el.querySelector("#cmdForm").addEventListener("submit", async (e) => { e.preventDefault(); const t = $("#cmdIn").value.trim(); if (!t) return; $("#cmdIn").value = ""; await JV.sendText(t); toast("Отправлено"); drawCommands(el, tab); });
     el.querySelectorAll("[data-run]").forEach((b) => b.addEventListener("click", async () => { await api(`/api/macros/${b.dataset.run}/run`, "POST"); toast("Запускаю"); }));
-    el.querySelectorAll("[data-mdel]").forEach((b) => b.addEventListener("click", async () => { if (await ask({ title: "Удалить цепочку?", yes: "Удалить", danger: true })) { await api(`/api/macros/${b.dataset.mdel}`, "DELETE"); draw(el, tab); } }));
+    el.querySelectorAll("[data-mdel]").forEach((b) => b.addEventListener("click", async () => { if (await ask({ title: "Удалить цепочку?", yes: "Удалить", danger: true })) { await api(`/api/macros/${b.dataset.mdel}`, "DELETE"); drawCommands(el, tab); } }));
     el.querySelectorAll("[data-again]").forEach((b) => b.addEventListener("click", () => JV.sendText(b.dataset.again)));
     const mf = el.querySelector("#macroForm");
     if (mf) mf.addEventListener("submit", async (e) => {
       e.preventDefault();
       const phrase = $("#mPhrase").value.trim(), lines = $("#mSteps").value.split("\n").map((s) => s.trim()).filter(Boolean);
       if (!phrase || !lines.length) return;
-      try { await api("/api/macros", "POST", { phrase, actions: lines.map((value) => ({ type: "command", value })) }); toast("Цепочка сохранена"); draw(el, "macros"); }
+      try { await api("/api/macros", "POST", { phrase, actions: lines.map((value) => ({ type: "command", value })) }); toast("Цепочка сохранена"); drawCommands(el, "macros"); }
       catch (err) { toast(err.message); }
     });
   }
@@ -137,9 +144,9 @@
   /* ---------- Memory ---------- */
   const MEMORY = {
     title: "Память", sub: "Что Джарвис помнит о вас, чему научился на поправках и что знает из ваших документов.",
-    async render(el) { await draw(el); },
+    async render(el) { await drawMemory(el); },
   };
-  async function draw(el) {
+  async function drawMemory(el) {
     const [facts, metrics, docs, shield] = await Promise.all([api("/api/memory/facts").catch(() => ({ facts: [], habits: [] })), api("/api/learning/metrics").catch(() => ({})), api("/api/docs").catch(() => ({})), api("/api/shield").catch(() => null)]);
     const st = (STATE.hud || {}).stage || {};
     el.innerHTML = `<div class="grid-2">
@@ -157,9 +164,9 @@
           <form class="form-row" id="docForm" style="margin-top:10px"><div class="field grow"><label for="docIn">Поиск по документам</label><input id="docIn" type="search" placeholder="Например: отчёт по выручке"></div><button class="btn" type="submit">Найти</button></form><div id="docOut" style="margin-top:10px"></div>`)}
         ${panel("Безопасность сети", "", shield ? `${kvr("Слушающих портов", num(shield.ports.listening.length))}${kvr("Внешних подключений", num(shield.ports.remote.length))}${kvr("Необычных открытых", (shield.ports.unusual || []).length ? `<span class="warn">${shield.ports.unusual.length}</span>` : "нет")}${kvr("VPN", shield.vpn.on ? "включён" : "выключен")}` : `<div class="empty">Проверяю…</div>`)}
       </div></div>`;
-    el.querySelector("#factForm").addEventListener("submit", async (e) => { e.preventDefault(); const t = $("#factIn").value.trim(); if (!t) return; try { await api("/api/memory/facts", "POST", { text: t }); toast("Запомнил"); draw(el); } catch (err) { toast(err.message); } });
-    el.querySelectorAll("[data-fdel]").forEach((b) => b.addEventListener("click", async () => { await api(`/api/memory/facts/${b.dataset.fdel}`, "DELETE"); draw(el); }));
-    $("#btnReflect").addEventListener("click", async (e) => { const b = e.currentTarget; await busy(b, async () => { const r = await api("/api/learning/reflect", "POST"); toast(r.message || "Готово"); draw(el); }); });
+    el.querySelector("#factForm").addEventListener("submit", async (e) => { e.preventDefault(); const t = $("#factIn").value.trim(); if (!t) return; try { await api("/api/memory/facts", "POST", { text: t }); toast("Запомнил"); drawMemory(el); } catch (err) { toast(err.message); } });
+    el.querySelectorAll("[data-fdel]").forEach((b) => b.addEventListener("click", async () => { await api(`/api/memory/facts/${b.dataset.fdel}`, "DELETE"); drawMemory(el); }));
+    $("#btnReflect").addEventListener("click", async (e) => { const b = e.currentTarget; await busy(b, async () => { const r = await api("/api/learning/reflect", "POST"); toast(r.message || "Готово"); drawMemory(el); }); });
     $("#btnDocs").addEventListener("click", async (e) => { const b = e.currentTarget; const ok = await ask({ title: "Изучить документы?", text: "Джарвис прочтёт PDF, Word и текстовые файлы в Документах, на рабочем столе и в Загрузках. Файлы остаются на этом ноутбуке.", yes: "Изучить" }); if (!ok) return; await busy(b, async () => { const r = await api("/api/docs/index", "POST", { confirm: true }); toast(r.message || "Изучаю"); }); });
     el.querySelector("#docForm").addEventListener("submit", async (e) => {
       e.preventDefault(); const q = $("#docIn").value.trim(); if (!q) return;
@@ -171,21 +178,34 @@
 
   /* ---------- Presentation ---------- */
   const SHOW = {
-    title: "Презентация", sub: "Доклад за месяц из ваших дел, целей и команд. Управляется голосом и кнопками.",
+    title: "Презентация", sub: "Джарвис рассказывает о себе или показывает отчёт за месяц. Сам читает слайды и листает их.",
     render(el) {
-      const s = (STATE.hud || {}).show || {};
       el.innerHTML = `<div class="grid-2" style="grid-template-columns:minmax(0,1fr) minmax(0,1.2fr)">
-        ${panel("Управление", "", `<div class="col">
+        ${panel("Начать", "", `<div class="col">
+          <div class="field"><label for="showDeck">Что показать</label><select id="showDeck"><option value="about">Самопрезентация: Джарвис о себе</option><option value="report">Отчёт за месяц: дела, цели, команды</option></select></div>
           <div class="field"><label for="showLang">Язык</label><select id="showLang"><option value="ru">Русский</option><option value="en">English</option><option value="ja">日本語</option></select></div>
-          <div class="foot" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="shStart">Начать доклад</button><button class="btn" id="shPrev">Назад</button><button class="btn" id="shNext">Дальше</button><button class="btn" id="shSay">Сказать вслух</button><button class="btn" id="shFull">На весь экран</button><button class="btn danger" id="shStop">Закончить</button></div>
-          <div class="callout"><div><b>Голосом</b>«начни доклад», «следующий слайд», «предыдущий слайд», «переключись на японский», «закончи презентацию».</div></div></div>`)}
-        ${panel("Текущий слайд", s.active ? `Слайд ${s.i + 1} из ${s.total}` : "Презентация не запущена", `<div class="stat" style="font-size:24px">${esc(s.slide?.title || "—")}</div><div class="sub" style="font-size:15px;margin-top:10px;color:var(--text)">${esc(s.slide?.say || "Запустите доклад, и здесь появится текст слайда.")}</div>`)}</div>`;
-      $("#shStart").onclick = async () => { await hudAct("show", { op: "start", lang: $("#showLang").value }); pollHud(); toast("Доклад начат"); setTimeout(() => this.render(el), 600); };
-      $("#shNext").onclick = async () => { await hudAct("show", { op: "next" }); pollHud(); setTimeout(() => this.render(el), 400); };
-      $("#shPrev").onclick = async () => { await hudAct("show", { op: "prev" }); pollHud(); setTimeout(() => this.render(el), 400); };
-      $("#shStop").onclick = async () => { await hudAct("show", { op: "stop" }); pollHud(); setTimeout(() => this.render(el), 400); };
-      $("#shSay").onclick = () => { const x = (STATE.hud || {}).show?.slide; if (x?.say) api("/api/say", "POST", { text: x.say, lang: $("#showLang").value }).catch(() => {}); };
-      $("#shFull").onclick = () => JV.openStage("deck");
+          <div class="foot" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="shAuto">Показ с голосом</button><button class="btn" id="shManual">Листать самому</button><button class="btn" id="shAudio">Сохранить аудиофайл</button></div>
+          <div class="callout"><div><b>Голосом</b>«самопрезентация», «расскажи о себе на японском», «дальше», «назад», «повтори слайд», «пауза», «продолжай», «переключись на английский», «закончи презентацию», «сохрани самопрезентацию в аудиофайл».</div></div>
+          <div class="callout"><div><b>Клавиши на весь экран</b>← → листать, пробел: пауза или продолжить, Esc: выйти.</div></div></div>`)}
+        ${panel("Слайды", "", `<div id="shList" class="col"></div>`)}</div>`;
+      const opts = () => ({ deck: $("#showDeck").value, lang: $("#showLang").value });
+      const list = async () => {
+        let slides = [];
+        try { slides = (await api("/api/hud/action", "POST", { kind: "deck", ...opts() })).slides || []; } catch (e) { toast(e.message); }
+        const box = $("#shList"); if (!box) return;
+        box.lang = opts().lang;
+        box.innerHTML = slides.map((s, i) => `<div class="kv"><span class="ellipsis"><b>${i + 1}. ${esc(s.title)}</b> — ${esc(s.big || "")}</span></div>`).join("") || `<div class="sub">Слайдов нет.</div>`;
+      };
+      $("#showDeck").onchange = list; $("#showLang").onchange = list; list();
+      $("#shAuto").onclick = () => JV.ACT.show_start({ ...opts(), auto: true });
+      $("#shManual").onclick = () => JV.ACT.show_start({ ...opts(), auto: false });
+      $("#shAudio").onclick = async () => {
+        toast("Готовлю аудиофайл, это займёт до минуты…");
+        try {
+          const r = await api("/api/hud/action", "POST", { kind: "show", op: "audio", ...opts() });
+          toast(r.reply); const a = document.createElement("a"); a.href = `/api/show/audio/${r.file}`; a.download = r.file; document.body.appendChild(a); a.click(); a.remove();
+        } catch (e) { toast(e.message); }
+      };
     },
     onData(_, force) { if (force) return; },
   };

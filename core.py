@@ -533,11 +533,27 @@ def start_hooks() -> None:
 # ---------------------------------------------------------------------------
 
 _speak_fn: Callable[[str, str], None] = lambda text, lang: None  # noqa: E731
+_stop_fn: Callable[[], None] = lambda: None  # noqa: E731
+_busy_fn: Callable[[], bool] = lambda: False  # noqa: E731
 
 
-def set_speaker(fn: Callable[[str, str], None]) -> None:
-    global _speak_fn
+def set_speaker(fn: Callable[[str, str], None], stop: Callable[[], None] | None = None,
+                busy: Callable[[], bool] | None = None) -> None:
+    global _speak_fn, _stop_fn, _busy_fn
     _speak_fn = fn
+    if stop:
+        _stop_fn = stop
+    if busy:
+        _busy_fn = busy
+
+
+def stop_speaking() -> None:
+    """Cut what Jarvis is saying now (a new slide must not wait behind the old one)."""
+    _stop_fn()
+
+
+def speaking() -> bool:
+    return bool(_busy_fn())
 
 
 def speak(text: str, lang: str = "ru", urgent: bool = False) -> None:
@@ -666,8 +682,62 @@ def read_history(limit: int = 200) -> list[dict]:
 
 def log_exchange(source: str, lang: str, user: str, reply: str) -> None:
     line = f"- {now():%H:%M:%S} [{source}, {lang}] **Вы:** {user}\n  **Джарвис:** {reply}\n"
+    (DATA / "log").mkdir(parents=True, exist_ok=True)
     with file_lock, open(DATA / "log" / f"{now():%Y-%m-%d}.md", "a", encoding="utf-8") as f:
         f.write(line)
+
+
+def _note_correction(text: str) -> bool:
+    """«Нет, я имел в виду…»: the previous exchange is stored as a correction, for the lessons."""
+    try:
+        from learning import correction_detector, store
+        hit = correction_detector.detect(text)
+        last = read_history(1)
+        if hit and last:
+            store.add_feedback(last[-1].get("user", ""), last[-1].get("reply", ""), rating=-1,
+                               skill=last[-1].get("skill", ""), comment="поправка", severity=hit["severity"])
+            return True
+    except Exception:  # noqa: BLE001 — learning must never break an answer
+        log.exception("correction note failed")
+    return False
+
+
+def _after_turn(text: str, reply: str, source: str, corrected: bool) -> None:
+    """Every exchange goes into the episodic memory, and Jarvis checks it for his own mistakes."""
+    try:
+        from cognition import memory
+        memory.record_turn(text, reply, source, skill=LAST_ACTION.get("skill", ""),
+                           valence=-1.0 if corrected else 0.0, mistake=corrected)
+    except Exception:  # noqa: BLE001
+        log.exception("episode not saved")
+    try:
+        from learning import autolearn
+        autolearn.observe(text, reply, LAST_ACTION.get("skill", ""), LAST_ACTION.get("tools", ""), source)
+    except Exception:  # noqa: BLE001
+        log.exception("self-learning failed")
+
+
+def process(text: str, lang: str, source: str) -> str:
+    """One request from any channel (voice, window, Telegram, «Избранное»).
+
+    The same path for all of them: the request is routed, and the exchange is kept everywhere —
+    the history, the day log, the episodic memory and the learning store. A crash in a skill is answered
+    and kept too, so nothing said to Jarvis is lost.
+    """
+    LAST_ACTION.update(skill="", tools="")
+    corrected = _note_correction(text)
+    try:
+        reply = styled(route(text, lang, source, CONFIG), lang)
+    except Exception as e:  # noqa: BLE001
+        log.exception("route failed for %r", text)
+        reply = f"Не получилось: {e}" if lang == "ru" else f"Bo'lmadi: {e}"
+    _after_turn(text, reply, source, corrected)
+    try:
+        log_exchange(source, lang, text, reply)
+        add_history(source, text, reply, lang, "brain" if LAST_ACTION.get("tools") else "skill" if LAST_ACTION.get("skill") else "rules")
+    except OSError:
+        log.exception("history not written")
+    return reply
 
 
 def load_json(path: Path, default):
@@ -736,7 +806,8 @@ _rerouting: dict = {}
 # skills whose last part is free text by design ("добавь дело <что угодно>") keep the instant path for long phrases
 _LONG_OK = {"vision.look", "tasks.add", "notes.add", "notes.search", "notes.recall", "reminders.in", "reminders.at", "messaging.send", "apps.search",
             "apps.youtube", "apps.music", "apps.browser", "modes.name", "recorder.start", "briefing.report", "llm.chat", "pc.about", "pc.analyze", "pc.optimize", "pc.optimize_undo", "pc.scan", "pc.index", "desktop.find_file", "activity.on", "activity.off", "activity.summary", "activity.forget",
-            "docs.search", "docs.summary", "memory.fact_add", "memory.recall", "shield.block", "show.lang", "docs.index"}
+            "docs.search", "docs.summary", "memory.fact_add", "memory.recall", "shield.block", "show.lang", "docs.index",
+            "show.about", "show.start"}
 # never run these from an AI guess — they change or delete things / talk to other people
 _NO_SMART = {"system.shutdown", "tasks.clear", "tasks.delete", "notes.delete", "notes.clear", "messaging.send",
              "apps.close", "reminders.cancel", "basics.reload", "recorder.start"}
@@ -794,6 +865,21 @@ def route(text: str, lang: str, source: str, config: dict) -> str:
         return pending_reply
     if source == "голос":
         text = fix_hearing(text)
+    if not _rerouting.get("alias"):
+        # a wording Jarvis learned himself: earlier it failed, then you said it in other words and that worked
+        try:
+            from learning import autolearn
+            means = autolearn.resolve(text)
+        except Exception:  # noqa: BLE001
+            log.exception("learned wordings unavailable")
+            means = None
+        if means and autolearn.norm(means) != autolearn.norm(text):
+            log.info("Learned wording %r -> %r", text, means)
+            _rerouting["alias"] = True
+            try:
+                return route(means, lang, source, config)
+            finally:
+                _rerouting["alias"] = False
     import agent
     # «да» / «нет» to a question the BRAIN asked (skills that ask, like music, wait for their own answer).
     # The answer goes straight to the brain: pasted into the request it would trigger a skill even on «нет».

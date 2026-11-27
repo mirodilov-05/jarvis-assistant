@@ -33,10 +33,10 @@ PROMPT = """Ты — внутренний голос ассистента Джа
 Если ошибок не было, верни {{"lessons": [], "facts": []}}."""
 
 
-def _today_history() -> list[dict]:
+def _today_history(since: str | None = None) -> list[dict]:
     import core
-    day = dt.date.today().isoformat()
-    return [h for h in core.read_history(600) if str(h.get("time", ""))[:10] == day]
+    day = since or dt.date.today().isoformat()
+    return [h for h in core.read_history(600) if str(h.get("time", ""))[:10] >= day]
 
 
 def _parse(text: str) -> dict:
@@ -54,11 +54,12 @@ def _parse(text: str) -> dict:
 def reflect(ask=None, path: Path | None = None) -> dict:
     """Builds lessons from today's corrections. `ask(system, messages) -> str` is injectable for tests."""
     corrections = [f for f in store.recent_feedback(400, path) if f["rating"] == -1 or f["severity"] > 0]
-    today = dt.date.today().isoformat()
-    corrections = [c for c in corrections if c["timestamp"][:10] == today]
+    # everything since the last reflection (yesterday's mistakes too, if the laptop was off at night)
+    since = (_state().get("day") or (dt.date.today() - dt.timedelta(days=1)).isoformat()) if path is None else dt.date.today().isoformat()
+    corrections = [c for c in corrections if c["timestamp"][:10] >= since]
     if not corrections:
-        return {"ok": True, "lessons": 0, "message": "За сегодня поправок не было, учить нечему."}
-    dialogues = "\n".join(f"В: {h.get('user', '')}\nО: {h.get('reply', '')}" for h in _today_history()[-40:]) or "(нет)"
+        return {"ok": True, "lessons": 0, "message": "Новых поправок и ошибок нет, учить нечему."}
+    dialogues = "\n".join(f"В: {h.get('user', '')}\nО: {h.get('reply', '')}" for h in _today_history(since)[-40:]) or "(нет)"
     fixes = "\n".join(f"- {c['user_text']}  (после ответа: {c['assistant_reply'][:120]})" for c in corrections[-30:])
     prompt = PROMPT.format(dialogues=dialogues[-6000:], corrections=fixes)
     if ask is None:
@@ -105,9 +106,9 @@ def _state() -> dict:
 
 
 def due_now(now: dt.datetime | None = None) -> bool:
+    """Once a day, from 02:30. A laptop that sleeps at night catches up the first time it is on after that."""
     now = now or dt.datetime.now()
-    in_window = (now.hour == 2 and now.minute >= 30) or (now.hour == 3 and now.minute < 30)
-    return in_window and _state().get("day") != now.date().isoformat()
+    return (now.hour, now.minute) >= (2, 30) and _state().get("day") != now.date().isoformat()
 
 
 def run_scheduled(now: dt.datetime | None = None) -> None:

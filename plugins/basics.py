@@ -17,7 +17,8 @@ _WD_UZ = ["dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba", "
     "basics.help",
     title={"ru": "Рассказать, что я умею", "uz": "Nima qila olishimni aytish"},
     patterns={
-        "ru": [r"(что|чего) (ты )?(умеешь|можешь)", r"твои (возможности|функции|команды)", r"^(помощь|команды|справка)$"],
+        "ru": [r"(что|чего) (ты )?(умеешь|можешь)", r"твои (возможности|функции|команды)",
+               r"(какие|какая) (у тебя )?(есть )?(функции|возможности|команды)", r"^(помощь|команды|справка)$"],
         "uz": [r"nima(lar)? qila olasan", r"nima qila olasiz", r"(qanday|qaysi) buyruqlar", r"imkoniyatlaring", r"^yordam$"],
     },
     examples={"ru": ["Что ты умеешь?"], "uz": ["Nima qila olasan?"]},
@@ -25,12 +26,14 @@ _WD_UZ = ["dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba", "
 )
 def help_skill(ctx: Ctx) -> str:
     caps = core.capabilities(ctx.lang)
-    titles = [t for t, _ in caps]
-    if ctx.source == "голос":
-        head = ctx.t("Я умею: ", "Men quyidagilarni qila olaman: ")
-        return head + ", ".join(titles[:14]) + ctx.t(
-            ". Полный список с примерами — в файле CAPABILITIES точка md.",
-            ". To'liq ro'yxat CAPABILITIES.md faylida.")
+    if ctx.source in ("голос", "телеграм"):
+        return ctx.t(
+            "Я управляю компьютером голосом: открываю и закрываю программы, меняю громкость и яркость, ищу файлы. "
+            "Веду дела, цели и напоминания. Управляю телевизором Samsung. Читаю и отправляю сообщения в Telegram "
+            "и WhatsApp, читаю почту и календарь. Помню факты о вас, ищу в ваших документах и учусь на своих ошибках. "
+            "Проверяю сеть и ускоряю ноутбук. Скажите «самопрезентация», и я подробно расскажу о себе на весь экран.",
+            "Men kompyuterni ovoz bilan boshqaraman, vazifalar va eslatmalarni yuritaman, televizorni boshqaraman, "
+            "Telegram va WhatsApp xabarlarini o'qiyman. To'liq ro'yxat CAPABILITIES.md faylida.")
     lines = [ctx.t("Я умею:", "Men qila olaman:")]
     for title, ex in caps:
         lines.append(f"• {title}" + (f" — «{ex[0]}»" if ex else ""))

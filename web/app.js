@@ -304,8 +304,8 @@
     });
     W("show", "Презентация", "show", "s", () => {
       const s = H().show || {};
-      if (!s.active) return `<div class="sub">Доклад за месяц из ваших дел, целей и команд. Можно сказать голосом: «начни доклад».</div><div class="foot">${btn("Начать", "show_start", {}, "primary")}</div>`;
-      return `<div class="sub">Слайд ${s.i + 1} из ${s.total} · ${esc(s.lang)}</div><div class="kv"><span class="ellipsis">${esc(s.slide?.title || "")}</span></div>
+      if (!s.active) return `<div class="sub">Джарвис рассказывает о себе на весь экран и сам листает слайды. Голосом: «самопрезентация».</div><div class="foot">${btn("Самопрезентация", "show_start", { deck: "about", auto: true }, "primary")}${btn("Отчёт", "show_start", { deck: "report" })}</div>`;
+      return `<div class="sub">${esc(s.deck_name || "")} · слайд ${s.i + 1} из ${s.total} · ${esc((s.lang || "").toUpperCase())}${s.auto ? " · читает сам" : ""}</div><div class="kv"><span class="ellipsis">${esc(s.slide?.title || "")}</span></div>
         <div class="foot">${btn("◀", "show_step", { d: -1 })}${btn("▶", "show_step", { d: 1 }, "primary")}${btn("Окно", "show_open", {})}${btn("Стоп", "show_stop", {}, "danger")}</div>`;
     });
     W("clock", "Часы", "clock", "s", () => {
@@ -343,6 +343,16 @@
       <div class="w-h"><span class="ico">${svg(def.icon)}</span><span class="ttl ellipsis">${esc(def.name)}</span>${tools}</div>
       <div class="w-b" data-body></div></article>`;
   }
+  /* Home frame (as in the earlier HUD): top bar, core in the middle with widgets on both sides, telemetry and command dock below. */
+  function telHtml() {
+    const h = H(), s = h.sys || {}, g = h.gpu || {}, c = h.cloud || {};
+    const chip = (k, v, warn) => `<span class="hx-chip${warn ? " warn" : ""}"><i>${k}</i><b>${v}</b></span>`;
+    return chip("ПРОЦ", `${num(s.cpu)}%`, (s.cpu || 0) > 85)
+      + chip("ПАМЯТЬ", `${num(s.ram_pct)}%`, (s.ram_pct || 0) > 85)
+      + chip("ВИДЕО", g.util != null ? `${num(g.util)}% · ${num(g.temp)}°C` : "—", (g.temp || 0) > 85)
+      + chip("ОБЛАКО", c.enabled === false ? "выкл" : c.error ? "ошибка" : "вкл", !!c.error);
+  }
+  function paintDock() { const t = $("#hxTel"); if (t) t.innerHTML = telHtml(); }
   function renderDashboardShell() {
     const mode = PREFS.layout.mode;
     const center = mode === "center";
@@ -355,23 +365,30 @@
              <div class="core-label"><b>ДЖАРВИС</b><span id="stateTxt">запуск</span></div></div>
            <div class="talk" id="talk" aria-live="polite"><div class="you" id="you"></div><div id="him">Подождите, Джарвис запускается.</div></div>
            <div class="feedback" id="fb"><button type="button" data-act="feedback" data-args='{"rating":1}' aria-label="Ответ верный">👍</button><button type="button" data-act="feedback" data-args='{"rating":-1}' aria-label="Ответ неверный">👎</button><span id="fbMsg"></span></div>
-           <form class="form-row" id="askForm" style="width:100%;max-width:520px"><div class="field grow"><input id="askIn" type="text" placeholder="Напишите команду или скажите «Джарвис»" aria-label="Команда для Джарвиса" autocomplete="off"></div><button class="btn primary" type="submit">Отправить</button><button class="btn icon" type="button" id="btnMic" aria-label="Говорить">${svg("mic")}</button></form>
          </div>
          <div class="col-w" id="colR" data-col="r">${r.map(widgetShell).join("")}</div>`
       : `<div class="col-w" id="colL" data-col="l" style="grid-column:1/-1">${list.map(widgetShell).join("")}</div>`;
     const toolbar = `<div class="dash-toolbar">
+        ${center ? `<div class="hx-brand"><span class="hx-dot" aria-hidden="true"></span>JARVIS PRIME OS <small>Windows 11</small></div>` : ""}
         <div class="seg" role="group" aria-label="Вид главной"><button type="button" data-act="mode" data-args='{"m":"center"}' aria-pressed="${mode === "center"}">Ядро и виджеты</button><button type="button" data-act="mode" data-args='{"m":"grid"}' aria-pressed="${mode === "grid"}">Сетка</button><button type="button" data-act="mode" data-args='{"m":"focus"}' aria-pressed="${mode === "focus"}">Только ядро</button></div>
         <span class="spacer"></span>
         <button class="btn ${EDIT.on ? "primary" : ""}" data-act="edit" aria-pressed="${EDIT.on}">${svg("move")} ${EDIT.on ? "Готово" : "Настроить виджеты"}</button>
         <button class="btn" data-act="addwidget">${svg("plus")} Добавить виджет</button>
+        ${center ? `<button class="btn" data-act="resetlayout">Сбросить порядок</button>` : ""}
       </div>`;
-    $("#view").innerHTML = `<div class="${EDIT.on ? "edit " : ""}">${toolbar}<div class="dash mode-${mode}" id="dash">${cols}</div></div>`;
+    const dock = center ? `<footer class="hx-dock" aria-label="Телеметрия и команды">
+        <div class="hx-tel" id="hxTel"></div>
+        <form class="form-row hx-cmd" id="askForm" role="search"><div class="field grow"><input id="askIn" type="text" placeholder="Напишите команду или скажите «Джарвис»" aria-label="Команда для Джарвиса" autocomplete="off"></div><button class="btn primary" type="submit">Отправить</button><button class="btn icon" type="button" id="btnMic" aria-label="Говорить">${svg("mic")}</button></form>
+        <button class="btn" data-act="show_open">${svg("show")} Презентация</button>
+      </footer>` : "";
+    $("#view").innerHTML = `<div class="${EDIT.on ? "edit " : ""}">${toolbar}<div class="dash mode-${mode}" id="dash">${cols}</div>${dock}</div>`;
     $("#view").dataset.page = "home";
     if (center) mountCore();
     bindWidgetDnd();
     paintWidgets(true);
   }
   function paintWidgets(force) {
+    paintDock();
     $$("#dash .w[data-w]").forEach((el) => {
       const item = itemOf(el.dataset.w), def = widgetDef(el.dataset.w);
       if (!item || !def) return;
@@ -442,6 +459,7 @@
     try {
       const d = await api("/api/hud");
       STATE.hud = d; STATE.stage = d.stage;
+      if (d.show && (d.show.active || SL.st?.active)) applyShow(d.show);   // started by voice or from Telegram: the slides appear
       pushHist("cpu", d.sys?.cpu); pushHist("down", d.net?.down ? d.net.down / 1048576 : 0);
       if (d.gpu) pushHist("gpu", d.gpu.util);
       coreState(); pillLink();
@@ -473,6 +491,7 @@
       else if (ev.type === "wizard") { openAnalysis && openAnalysis(); }
       else if (ev.type === "open") { location.hash = ev.panel === "history" ? "#/commands" : "#/settings"; }
       else if (ev.type === "reload") location.reload();
+      else if (ev.type === "show") syncShow();
     };
     ws.onclose = () => { setStatus("starting"); setTimeout(connectWs, 2000); };
   }
@@ -515,10 +534,15 @@
       try { const r = await api("/api/feedback", "POST", { rating }); const m = $("#fbMsg"); if (m) { m.textContent = r.message || ""; setTimeout(() => { if (m) m.textContent = ""; }, 2500); } }
       catch (e) { toast(e.message); }
     },
-    async show_start() { await hudAct("show", { op: "start", lang: "ru" }); pollHud(); openStage("deck"); },
-    async show_step({ d }) { await hudAct("show", { op: d > 0 ? "next" : "prev" }); pollHud(); },
-    async show_stop() { await hudAct("show", { op: "stop" }); pollHud(); toast("Презентация закончена"); },
-    show_open() { openStage("deck"); },
+    async show_start({ deck = "about", auto = false, lang = "" } = {}) { await showOp("start", { deck, lang: lang || SL.st?.lang || "ru", auto }); },
+    async show_step({ d }) { await showOp(d > 0 ? "next" : "prev"); },
+    async show_stop() { await showOp("stop"); toast("Презентация закончена"); },
+    show_open() { openStage(); },
+    resetlayout() {
+      const extra = WIDGET_DEFS.filter((w) => !DEFAULT_ITEMS.some((d) => d.id === w.id)).map((w) => ({ id: w.id, col: "r", size: w.size, on: false }));
+      PREFS.layout.items = clone(DEFAULT_ITEMS).concat(extra);
+      savePrefs(); renderDashboardShell(); toast("Порядок виджетов сброшен");
+    },
     async wmove({ id, d }) { moveWidget(id, d); },
     wsize({ id }) { const it = itemOf(id); const i = SIZES.indexOf(it.size || "s"); it.size = SIZES[(i + 1) % 3]; savePrefs(); renderDashboardShell(); },
     wstyle({ id }) { const it = itemOf(id); const order = [undefined, "solid", "minimal"]; it.style = order[(order.indexOf(it.style) + 1) % 3]; savePrefs(); renderDashboardShell(); },
@@ -640,7 +664,8 @@
     { label: "Телевизор: включить", go: () => ACT.tv({ what: "on" }) },
     { label: "Телевизор: выключить", go: () => ACT.tv({ what: "off" }) },
     { label: "Включить фокус на 25 минут", go: () => ACT.focus({ minutes: 25 }) },
-    { label: "Начать презентацию", go: () => ACT.show_start() },
+    { label: "Самопрезентация с голосом", go: () => ACT.show_start({ deck: "about", auto: true }) },
+    { label: "Отчёт за месяц на весь экран", go: () => ACT.show_start({ deck: "report" }) },
     { label: "Проанализировать ноутбук", go: () => openAnalysis && openAnalysis() },
     { label: "Настроить виджеты", go: () => { location.hash = "#/"; setTimeout(() => ACT.edit(), 50); } },
     { label: "Добавить виджет", go: () => { location.hash = "#/"; setTimeout(openAddWidget, 60); } },
@@ -674,35 +699,85 @@
   document.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCmdk(); }
     if (e.key === "Escape" && !$("#cmdk").hidden) closeCmdk();
-    if (e.key === "Escape" && !$("#stage").hidden) closeStage();
-    if (!$("#stage").hidden && (e.key === "ArrowRight" || e.key === "ArrowLeft")) ACT.show_step({ d: e.key === "ArrowRight" ? 1 : -1 });
+    if (!$("#stage").hidden) {
+      if (e.key === "Escape") { e.preventDefault(); closeStage(); }
+      else if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); showOp("next"); }
+      else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); showOp("prev"); }
+      else if (e.key === " " && !e.target.closest("button,input,textarea")) { e.preventDefault(); showOp(SL.st?.auto ? "pause" : "play"); }
+    }
   });
 
-  /* ---------- presentation on the whole screen ---------- */
-  const SL = { slides: [], i: 0, lang: "ru", mode: "deck", closedKey: "" };
-  async function openStage(mode = "deck") {
-    SL.mode = mode;
-    const st = $("#stage"); st.hidden = false;
-    try { const r = await api("/api/hud/action", "POST", { kind: "deck", lang: SL.lang }); SL.slides = r.slides || []; SL.i = (STATE.hud?.show?.i) || 0; }
+  /* ---------- presentation on the whole screen ----------
+   * The server keeps the position (deck, slide, language, auto reading). The screen only shows it and sends
+   * button presses there, so the voice, the buttons and the slides always agree. */
+  const SL = { st: null, key: "", timer: 0, busy: false };
+  async function showOp(op, extra = {}) {
+    if (SL.busy && op !== "stop") return;
+    SL.busy = true;
+    try { const r = await api("/api/hud/action", "POST", { kind: "show", op, ...extra }); if (r.show) applyShow(r.show); return r; }
     catch (e) { toast(e.message); }
-    drawStage();
-    st.requestFullscreen && st.requestFullscreen().catch(() => {});
+    finally { SL.busy = false; }
+  }
+  async function syncShow() {
+    try { applyShow(await api("/api/show")); } catch { /* the next poll tries again */ }
+  }
+  function applyShow(st) {
+    SL.st = st;
+    if (STATE.hud) STATE.hud.show = st;
+    const stage = $("#stage");
+    if (!st || !st.active) {
+      if (!stage.hidden) { stage.hidden = true; if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); }
+      clearInterval(SL.timer); SL.timer = 0; SL.key = "";
+      return;
+    }
+    if (stage.hidden) { stage.hidden = false; }
+    if (!SL.timer) SL.timer = setInterval(() => { if (!document.hidden) syncShow(); }, 800);
+    const key = `${st.deck}|${st.lang}|${st.i}|${st.auto}|${st.total}`;
+    if (key !== SL.key) { SL.key = key; drawStage(); }
+  }
+  async function openStage(deck = "") {
+    const cur = SL.st || STATE.hud?.show;
+    if (cur?.active && (!deck || deck === cur.deck)) { applyShow(cur); }
+    else { await showOp("start", { deck: deck || "about", lang: cur?.lang || "ru", auto: false }); }
+    const st = $("#stage");
+    if (!st.hidden && st.requestFullscreen && !document.fullscreenElement) st.requestFullscreen().catch(() => {});
   }
   function drawStage() {
-    const st = $("#stage"), x = SL.slides[SL.i] || {};
-    st.innerHTML = `<header><div class="seg" role="group" aria-label="Язык">${[["ru", "RU"], ["en", "EN"], ["ja", "JA"]].map(([k, n]) => `<button type="button" data-sl="${k}" aria-pressed="${SL.lang === k}">${n}</button>`).join("")}</div><span class="grow"></span><button class="btn" data-stage="close">Выйти</button></header>
-      <div class="body"><div class="ti">${esc(x.title || "")}</div><div class="bg">${esc(x.big || "")}</div><div class="su">${esc(x.say || "")}</div></div>
-      <footer><button class="btn" data-stage="prev">Назад</button><div class="dots" style="flex:1">${SL.slides.map((_, i) => `<i class="${i <= SL.i ? "on" : ""}"></i>`).join("")}</div><button class="btn" data-stage="say">Сказать вслух</button><button class="btn primary" data-stage="next">Дальше</button></footer>`;
+    const st = $("#stage"), s = SL.st || {}, x = s.slide || {}, slides = s.slides || [];
+    const points = (x.points || []).length ? `<ul class="pts">${x.points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : "";
+    st.lang = s.lang === "ja" ? "ja" : s.lang === "en" ? "en" : "ru";
+    st.innerHTML = `<header>
+        <div class="seg" role="group" aria-label="Презентация"><button type="button" data-deck="about" aria-pressed="${s.deck === "about"}">О Джарвисе</button><button type="button" data-deck="report" aria-pressed="${s.deck === "report"}">Отчёт за месяц</button></div>
+        <div class="seg" role="group" aria-label="Язык">${[["ru", "RU"], ["en", "EN"], ["ja", "JA"]].map(([k, n]) => `<button type="button" data-sl="${k}" aria-pressed="${s.lang === k}">${n}</button>`).join("")}</div>
+        <span class="grow"></span>
+        <button class="btn" data-stage="audio" title="Сохранить всю презентацию одним MP3-файлом">Аудиофайл</button>
+        <button class="btn" data-stage="close">Выйти</button></header>
+      <div class="body"><div class="ti">${esc(x.title || "")}</div><div class="bg">${esc(x.big || "")}</div>${points}<div class="su">${esc(x.say || "")}</div></div>
+      <footer><button class="btn" data-stage="prev" ${s.i <= 0 ? "disabled" : ""}>Назад</button>
+        <div class="dots" style="flex:1" role="group" aria-label="Слайды">${slides.map((sl, i) => `<button type="button" class="${i <= s.i ? "on" : ""}" data-go="${i}" aria-label="Слайд ${i + 1}: ${esc(sl.title || "")}"></button>`).join("")}</div>
+        <span class="faint small mono">${(s.i || 0) + 1} / ${s.total || 0}</span>
+        <button class="btn" data-stage="say">Сказать вслух</button>
+        <button class="btn ${s.auto ? "" : "primary"}" data-stage="auto" aria-pressed="${!!s.auto}">${s.auto ? "Пауза" : "Автопоказ с голосом"}</button>
+        <button class="btn primary" data-stage="next" ${s.i >= (s.total || 1) - 1 ? "disabled" : ""}>Дальше</button></footer>`;
   }
-  function closeStage() { $("#stage").hidden = true; if (document.fullscreenElement) document.exitFullscreen(); }
+  function closeStage() { showOp("stop"); }
   $("#stage").addEventListener("click", async (e) => {
-    const b = e.target.closest("[data-stage],[data-sl]"); if (!b) return;
-    if (b.dataset.sl) { SL.lang = b.dataset.sl; await openStage("deck"); return; }
+    const b = e.target.closest("[data-stage],[data-sl],[data-deck],[data-go]"); if (!b) return;
+    const s = SL.st || {};
+    if (b.dataset.sl) return showOp("lang", { lang: b.dataset.sl });
+    if (b.dataset.deck) return showOp("lang", { lang: s.lang || "ru", deck: b.dataset.deck });
+    if (b.dataset.go) return showOp("go", { i: Number(b.dataset.go) });
     const a = b.dataset.stage;
-    if (a === "close") closeStage();
-    if (a === "next") { SL.i = Math.min(SL.slides.length - 1, SL.i + 1); drawStage(); }
-    if (a === "prev") { SL.i = Math.max(0, SL.i - 1); drawStage(); }
-    if (a === "say" && SL.slides[SL.i]) api("/api/say", "POST", { text: SL.slides[SL.i].say, lang: SL.lang }).catch(() => {});
+    if (a === "close") return showOp("stop");
+    if (a === "next") return showOp("next");
+    if (a === "prev") return showOp("prev");
+    if (a === "say") return showOp("say");
+    if (a === "auto") return showOp(s.auto ? "pause" : "play");
+    if (a === "audio") {
+      toast("Готовлю аудиофайл, это займёт до минуты…");
+      const r = await showOp("audio", { lang: s.lang || "ru", deck: s.deck || "about" });
+      if (r?.file) { toast(r.reply); const link = document.createElement("a"); link.href = `/api/show/audio/${r.file}`; link.download = r.file; document.body.appendChild(link); link.click(); link.remove(); }
+    }
   });
 
   /* ---------- onboarding and analysis (kept from the earlier version, in the new look) ---------- */

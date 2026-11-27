@@ -89,6 +89,24 @@ def focus(ctx: Ctx) -> str:
     return pcx.focus_start(minutes)
 
 
+@skill("v3.focus_add", title={"ru": "Фокус-щит: закрывать ещё и это (сайт или программу)"},
+       patterns={"ru": [r"(?:добавь|закрывай|закрывать|блокируй) (?P<w>[\w.\- ]{2,40}?) (?:в|для|во время) (?:режим\w* фокуса|фокус\w*|фокус-щит\w*)$",
+                        r"(?:в|во время) (?:режим\w* фокуса|фокус\w*) (?:закрывай|закрывать|блокируй)(?: тоже| ещё| еще)? (?P<w>[\w.\- ]{2,40})$",
+                        r"фокус\w*.* (?:закрыть|закрывай|закрывать|блокируй|блокировать) (?P<w>[\w.\-]{2,30})(?: тоже| ещё| еще)?$"]},
+       examples={"ru": ["Закрывай инстаграм в режиме фокуса", "Добавь discord в фокус"]}, priority=4)
+def focus_add(ctx: Ctx) -> str:
+    import pcx
+    w = re.sub(r"^(?:тоже|ещё|еще)\s+|\s+(?:тоже|ещё|еще)$", "", ctx.match.group("w").strip())
+    names = {"инстаграм": "instagram", "инстаграмм": "instagram", "тикток": "tiktok", "дискорд": "discord",
+             "телеграм": "telegram", "ютуб": "youtube", "вк": "vk.com", "вконтакте": "vk.com", "твич": "twitch"}
+    word = names.get(w, w)
+    words = pcx.focus_add(word)
+    reply = f"Добавил «{word}» в фокус-щит. Свой список: {', '.join(words)}."
+    if re.match(r"^(?:джарвис )?(?:добавь|включи|запусти) режим", ctx.norm) and not pcx.focus_active():
+        reply += " " + pcx.focus_start(50)          # «добавь режим фокуса, закрыть инстаграм тоже»: both at once
+    return reply
+
+
 @skill("v3.persona_status", title={"ru": "Какой сейчас характер"},
        patterns={"ru": [r"(?:какой|какая) (?:сейчас |у тебя )?(?:характер|персона|роль)"]},
        examples={"ru": ["Какой сейчас характер?"]}, priority=3)
@@ -98,4 +116,4 @@ def persona_status(ctx: Ctx) -> str:
     return f"Сейчас характер «{names.get(core.mode(), core.mode())}». Меняется словами «характер программист» и т. п."
 
 
-core._LONG_OK.update({"v3.rates", "v3.movie", "v3.app_volume", "v3.focus", "v3.save_this", "modes.persona"})
+core._LONG_OK.update({"v3.rates", "v3.movie", "v3.app_volume", "v3.focus", "v3.focus_add", "v3.save_this", "modes.persona"})

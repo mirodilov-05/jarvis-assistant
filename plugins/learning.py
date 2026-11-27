@@ -1,5 +1,5 @@
 """Learning from corrections: «проведи ночную рефлексию», «как ты учишься», «что ты выучил»."""
-from learning import evaluation, reflection
+from learning import autolearn, evaluation, reflection
 from core import Ctx, skill, on_start
 
 
@@ -28,5 +28,34 @@ def reflect_now(ctx: Ctx) -> str:
 )
 def metrics_say(ctx: Ctx) -> str:
     m = evaluation.metrics()
-    return (f"Поправок было {m['corrections_detected']}, уроков {m['lessons_learned']}. "
-            f"Повторных ошибок {m['repeat_mistake_rate']} процентов. Чем ниже, тем лучше.")
+    learned = len(autolearn.aliases(500))
+    return (f"Поправок и своих ошибок было {m['corrections_detected']}, уроков {m['lessons_learned']}, "
+            f"выученных фраз {learned}. Повторных ошибок {m['repeat_mistake_rate']} процентов. Чем ниже, тем лучше.")
+
+
+@skill(
+    "learning.aliases",
+    title={"ru": "Какие фразы Джарвис выучил сам"},
+    patterns={"ru": [r"^(?:джарвис )?(?:что ты выучил сам|какие фразы ты выучил|что ты запомнил из ошибок)$"]},
+    examples={"ru": ["Что ты выучил сам"]},
+    priority=4,
+)
+def aliases_say(ctx: Ctx) -> str:
+    rows = autolearn.aliases(5)
+    if not rows:
+        return ("Пока ничего. Если я не пойму фразу, скажите то же другими словами: "
+                "я запомню, что значила первая.")
+    return "Я выучил: " + "; ".join(f"«{r['phrase']}» значит «{r['means']}»" for r in rows) + "."
+
+
+@skill(
+    "learning.forget_alias",
+    title={"ru": "Забыть последнюю выученную фразу"},
+    patterns={"ru": [r"^(?:джарвис )?(?:забудь|отмени) (?:последнее|это) (?:обучение|правило)$",
+                     r"^(?:джарвис )?не запоминай (?:это|так)$"]},
+    examples={"ru": ["Забудь последнее обучение"]},
+    priority=4,
+)
+def forget_alias(ctx: Ctx) -> str:
+    row = autolearn.forget_last()
+    return f"Забыл: «{row['phrase']}»." if row else "Выученных фраз нет."

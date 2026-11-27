@@ -169,7 +169,26 @@ def playing_apps() -> list[str]:
 DISTRACT_TITLES = re.compile(r"(youtube|tiktok|instagram|twitch|reddit|vk\.com|вконтакте|9gag|netflix|кинопоиск|"
                              r"shorts|reels|одноклассники)", re.I)
 DISTRACT_EXES = {"steam.exe", "steamwebhelper.exe", "epicgameslauncher.exe", "battle.net.exe", "riotclientservices.exe"}
+# Microsoft Store apps (Instagram, TikTok, Netflix…) run inside ApplicationFrameHost or under their own name
+DISTRACT_APP_EXE = re.compile(r"^(?:instagram|tiktok|netflix|twitch|vk|reddit)", re.I)
+STORE_HOSTS = {"applicationframehost.exe", "wwahost.exe"}
 FOCUS = {"until": 0.0, "thread": None, "closed": 0}
+
+
+def focus_extra() -> list[str]:
+    """Words the owner added himself («закрывай инстаграм в режиме фокуса»): saved in settings, focus.extra."""
+    raw = core.setting("focus", "extra", "") or ""
+    items = raw if isinstance(raw, list) else str(raw).split(",")
+    return [w.strip().lower() for w in items if w and w.strip()]
+
+
+def focus_add(word: str) -> list[str]:
+    words = focus_extra()
+    w = word.strip().lower()
+    if w and w not in words:
+        words.append(w)
+        core.save_setting("focus", "extra", ",".join(words))
+    return words
 
 
 def focus_active() -> bool:
@@ -182,7 +201,9 @@ def focus_start(minutes: float) -> str:
     if not (FOCUS["thread"] and FOCUS["thread"].is_alive()):
         FOCUS["thread"] = threading.Thread(target=_focus_loop, daemon=True, name="focus-shield")
         FOCUS["thread"].start()
-    return f"Фокус-щит включён на {int(minutes)} мин, сэр. YouTube, TikTok и Steam буду закрывать."
+    extra = focus_extra()
+    more = (", а также " + ", ".join(extra)) if extra else ""
+    return f"Фокус-щит включён на {int(minutes)} мин, сэр. YouTube, TikTok, Instagram и Steam буду закрывать{more}."
 
 
 def focus_stop() -> str:
@@ -194,9 +215,14 @@ def focus_stop() -> str:
 
 
 def _distracting(title: str, exe: str) -> bool:
-    if exe in DISTRACT_EXES:
+    exe = (exe or "").lower()
+    low = (title or "").lower()
+    extra = focus_extra()
+    if exe in DISTRACT_EXES or DISTRACT_APP_EXE.match(exe) or any(w and w in exe for w in extra):
         return True
-    return exe in BROWSERS and bool(DISTRACT_TITLES.search(title))
+    if exe in BROWSERS or exe in STORE_HOSTS:
+        return bool(DISTRACT_TITLES.search(title or "")) or any(w in low for w in extra)
+    return False
 
 
 def _focus_loop() -> None:

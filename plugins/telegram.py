@@ -102,6 +102,42 @@ def connected() -> bool:
 
 # ---- login flow used by the app ------------------------------------------
 
+_RU_ERRORS = {
+    "SendCodeUnavailableError": "Telegram уже несколько раз отправлял код на этот номер и пока больше не отправит. "
+                                "Код приходит в само приложение Telegram, в чат «Telegram», а не по SMS. "
+                                "Найдите последний код там или подождите 1–2 часа и запросите снова.",
+    "PhoneNumberInvalidError": "Номер не подходит. Введите его полностью, с кодом страны, например +998901234567.",
+    "PhoneNumberBannedError": "Этот номер заблокирован в Telegram.",
+    "PhoneCodeInvalidError": "Код неверный. Проверьте цифры в чате «Telegram» и введите снова.",
+    "PhoneCodeExpiredError": "Код устарел. Нажмите «Отправить код» ещё раз и сразу введите новый.",
+    "PhoneCodeEmptyError": "Введите код из чата «Telegram».",
+    "PasswordHashInvalidError": "Пароль двухэтапной проверки неверный.",
+    "ApiIdInvalidError": "api_id или api_hash неверные. Возьмите их заново на my.telegram.org.",
+    "AuthRestartError": "Telegram попросил начать вход заново. Нажмите «Отправить код» ещё раз.",
+}
+
+
+def explain(e: Exception) -> str:
+    """A Telegram error in plain Russian, with what to do."""
+    name = type(e).__name__
+    secs = getattr(e, "seconds", None)
+    if name.startswith("Flood") and secs:
+        return f"Слишком много попыток. Telegram разрешит снова через {max(1, round(secs / 60))} мин."
+    if name in _RU_ERRORS:
+        return _RU_ERRORS[name]
+    if isinstance(e, (TimeoutError, ConnectionError, OSError)):
+        return "Нет связи с Telegram. Проверьте интернет и попробуйте ещё раз."
+    return f"Telegram ответил ошибкой: {e}"
+
+
+def _login_call(go, timeout: float) -> str:
+    try:
+        return run(go, timeout=timeout)
+    except Exception as e:  # noqa: BLE001 — shown to the owner as a clear sentence
+        core.log.warning("Telegram login: %s: %s", type(e).__name__, e)
+        raise RuntimeError(explain(e)) from e
+
+
 def login_send_code(phone: str) -> str:
     async def go(c):
         if await c.is_user_authorized():
@@ -109,7 +145,7 @@ def login_send_code(phone: str) -> str:
         sent = await c.send_code_request(phone)
         _login.update(phone=phone, hash=sent.phone_code_hash)
         return "code_sent"
-    return run(go, timeout=60)
+    return _login_call(go, 60)
 
 
 def login_sign_in(code: str = "", password: str = "") -> str:
@@ -127,7 +163,7 @@ def login_sign_in(code: str = "", password: str = "") -> str:
         _auth.update(ok=True, t=time.time())
         _login.clear()
         return f"ok:{me.first_name or ''}"
-    return run(go, timeout=90)
+    return _login_call(go, 90)
 
 
 def logout() -> None:

@@ -333,6 +333,9 @@ def save_link(ctx: Ctx) -> str:
     return ctx.t(f"Сохранил. Теперь скажите «открой {name}».", f"Saqlandi. Endi «{name}ni och» deng.")
 
 
+_OPEN_HEAD = re.compile(r"^(?:эй,?\s*)?(?:джарвис[,!\s]*)?(?:открой|запусти|открыть|запустить)(?: мне)?\s+", re.I)
+
+
 @skill(
     "apps.open",
     title={"ru": "Открыть программу, папку или сайт", "uz": "Dastur, papka yoki saytni ochish"},
@@ -345,6 +348,11 @@ def save_link(ctx: Ctx) -> str:
     priority=60,
 )
 def open_app(ctx: Ctx) -> str:
+    # «открой Counter-Strike, Discord и Telegram»: every program, not only the first one
+    raw = _OPEN_HEAD.sub("", ctx.text.strip())
+    parts = [p.strip(" .!?") for p in re.split(r"\s*[,;]\s*|\s+и\s+", raw) if p.strip(" .!?")]
+    if 1 < len(parts) <= 5:
+        return " ".join(open_target(ctx, core.normalize(p, ctx.lang)) for p in parts)
     return open_target(ctx, ctx.group(1))
 
 

@@ -19,3 +19,49 @@ whatsapp-bridge/node_modules/
 Thumbs.db
 .vscode/
 .idea/
+
+# JARVIS PRIME secrets — never commit
+prime/.env
+prime/backups/
+prime/workspace/
+prime/data/
+
+# Learned about this PC, session files, tokens — never commit
+*.session
+tv_token.txt
+pc_profile.json
+
+# Telegram relay: the token lives only here, on the device that runs it
+relay/relay_config.json
+
+# This PC's own devices (TV address), reports and logs — never commit
+prime/config/devices.yaml
+PROJECT_REPORT.md
+*.log
+*.err
+
+# Learning core and the cognitive database
+data/jarvis_cognitive.db
+config/system_prompt_evolved.md
+
+# Secrets, caches and models (never publish)
+*.db
+*.sqlite*
+*.jsonl
+config/secrets.json
+whatsapp-bridge/sessions/
+whatsapp-bridge/.wwebjs_auth/
+cache/
+.vscode/
+.idea/
+prime/config/devices.yaml
+PROJECT_REPORT.md
+*.log
+*.err
+
+# Installer and maintenance logs, partial downloads
+install.log
+supervisor.log
+prime.log
+*.part
+*.tmp

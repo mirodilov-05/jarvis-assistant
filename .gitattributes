@@ -1,0 +1,19 @@
+# Text files are stored with LF in the repository and checked out with the system's line endings.
+* text=auto
+
+# Windows scripts must keep CRLF so cmd and PowerShell read them correctly.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files: never touched by line-ending conversion or diffs.
+*.wav binary
+*.onnx binary
+*.npz binary
+*.db binary
+*.ico binary
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.webm binary
+*.mp3 binary

@@ -87,6 +87,18 @@ def test_five_capsule_looks_move_with_the_voice():
     check("Settings has the capsule section with the five looks", '["capsule", "Мини-капсула"' in js and "capsule_style" in js)
 
 
+def test_a_new_laptop_hears_its_name_without_a_key_or_nvidia():
+    src = (ROOT / "assistant.py").read_text(encoding="utf-8")
+    check("NVIDIA is detected, not assumed", "ctranslate2.get_cuda_device_count()" in src and 'return "cuda" if want == "cuda" and has_cuda() else "cpu"' in src)
+    check("on the processor the main model is the light one", 'cfg("voice", "whisper_model_cpu", "small")' in src)
+    check("the name is checked by the tiny model without a key on the processor",
+          'use_tiny = cfg("cloud", "local_spotting", True) and (cloud.stt_enabled() or stt_device() == "cpu")' in src)
+    inst = (ROOT / "install.ps1").read_text(encoding="utf-8")
+    check("the installer downloads the speech models in advance", 'download_model as d; [d(m) for m in ("tiny", "small")]' in inst)
+    js = (ROOT / "web" / "pages.js").read_text(encoding="utf-8")
+    check("Settings → Голос shows the microphone live and what to fix", "Слышит ли меня Джарвис" in js and "Разрешить классическим приложениям" in js)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

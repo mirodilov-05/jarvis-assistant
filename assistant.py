@@ -1782,6 +1782,7 @@ def run_server() -> None:
             "remote": remote_bot.status(),
             "ui": {"accent": core.setting("ui", "accent", "cyan"), "glass": core.setting("ui", "glass", 0.72),
                    "dim": core.setting("ui", "dim", 0.55), "capsule_auto": bool(core.setting("ui", "capsule_auto", True)),
+                   "capsule_style": core.setting("ui", "capsule_style", "wave"),
                    "bg": ({"url": f"/media/{bg.name}?v={int(bg.stat().st_mtime)}",
                            "kind": "video" if bg.suffix.lower() in (".mp4", ".webm") else "image"} if bg else None)},
             "packs": macros.packs() if macros else [], "pack": macros.active_pack() if macros else "",

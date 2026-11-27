@@ -60,6 +60,33 @@ def test_speech_is_cut_into_sentences():
     check("English and Japanese never fall back to the Russian voice", "_sapi_lang(" in src)
 
 
+def test_five_capsule_looks_move_with_the_voice():
+    import tray
+
+    class Canvas:                     # records what would be drawn
+        def __init__(self):
+            self.items = []
+
+        def delete(self, *_):
+            self.items = []
+
+        def __getattr__(self, name):
+            return lambda *a, **k: self.items.append((name, a))
+    check("five looks of the capsule", tray.STYLES == ("wave", "orb", "pulse", "scanner", "dots"))
+    for style in tray.STYLES:
+        c = Canvas()
+        tray.draw_style(c, style, 62, 26, 0.4, 0.9, "speaking", "#78aaff")
+        check(f"{style}: draws its sign", len(c.items) > 0)
+    loud, quiet = Canvas(), Canvas()
+    tray.draw_style(loud, "wave", 62, 26, 0.4, 1.0, "speaking", "#78aaff")
+    tray.draw_style(quiet, "wave", 62, 26, 0.4, 0.05, "speaking", "#78aaff")
+    height = lambda cv: sum(a[3] - a[1] for n, a in cv.items if n == "create_rectangle")  # noqa: E731
+    check("the wave bars grow with a louder voice", height(loud) > height(quiet) * 2)
+    check("integer coordinates: crisp bars", all(all(isinstance(v, int) for v in a[:4]) for n, a in loud.items if n == "create_rectangle"))
+    js = (ROOT / "web" / "pages.js").read_text(encoding="utf-8")
+    check("Settings has the capsule section with the five looks", '["capsule", "Мини-капсула"' in js and "capsule_style" in js)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

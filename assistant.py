@@ -483,10 +483,26 @@ def _load_model(name: str, device: str):
         return _load_model(name, "cpu")
 
 
+_CUDA: dict = {}
+
+
+def has_cuda() -> bool:
+    """Is there an NVIDIA card that the speech models can use? (asked once)"""
+    if "ok" not in _CUDA:
+        try:
+            import ctranslate2
+            _CUDA["ok"] = ctranslate2.get_cuda_device_count() > 0
+        except Exception:  # noqa: BLE001
+            _CUDA["ok"] = False
+        log.info("Speech on %s", "the NVIDIA card" if _CUDA["ok"] else "the processor (no NVIDIA card)")
+    return _CUDA["ok"]
+
+
 def stt_device() -> str:
     if GAME.get("on") and cfg("performance", "game_mode_cpu_speech", False):
         return "cpu"
-    return cfg("voice", "whisper_device", "cuda")
+    want = cfg("voice", "whisper_device", "cuda")
+    return "cuda" if want == "cuda" and has_cuda() else "cpu"
 
 
 def whisper(kind: str = "main"):
@@ -495,7 +511,9 @@ def whisper(kind: str = "main"):
     with _whisper_lock:
         m = _models.get(kind)
         if m is None or m[1] != device:
-            name = cfg("voice", "whisper_model", "yuldashev222/whisper-small-uz-v1-ct2") if kind == "main" else \
+            # on the processor the big model takes seconds per phrase: a laptop without NVIDIA gets "small"
+            main_name = cfg("voice", "whisper_model", "large-v3-turbo") if device == "cuda" else cfg("voice", "whisper_model_cpu", "small")
+            name = main_name if kind == "main" else \
                 cfg("voice", "spot_model", "tiny") if kind == "spot" else cfg("voice", "lid_model", "base")
             _models[kind] = (_load_model(name, device), device)
             log.info("Whisper %s model loaded: %s on %s", kind, name, device)
@@ -870,7 +888,11 @@ def spot(audio: np.ndarray) -> tuple[str, float]:
     """What the small local Whisper hears (for the name and «стоп»): (text, confidence). Never leaves the computer."""
     if voiced_seconds(audio) < 0.2:
         return "", -9.0
-    if not (cloud.stt_enabled() and cfg("cloud", "local_spotting", True)):
+    # The name is checked by the tiny model on the processor (fast, private). Only with an NVIDIA card and no cloud
+    # does the main local model do it. Before, a new laptop without a Groq key and without NVIDIA ran the big model
+    # on the processor for every phrase, after a silent 1.6 GB download: Jarvis seemed deaf to «Джарвис».
+    use_tiny = cfg("cloud", "local_spotting", True) and (cloud.stt_enabled() or stt_device() == "cpu")
+    if not use_tiny:
         text, _, reliable = transcribe(audio, accurate=False)
         return text, -0.2 if reliable else -2.0
     segs, _ = whisper("spot").transcribe(audio.astype(np.float32) / 32768.0, language="ru", beam_size=2, vad_filter=False,

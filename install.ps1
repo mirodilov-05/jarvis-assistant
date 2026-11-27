@@ -142,6 +142,12 @@ if ($todo.Contains('models')) {
         foreach ($m in $mmiss) { New-Item -ItemType Directory -Force (Split-Path $m) | Out-Null; Get-File $models[$m] $m }
     }
 }
+Step 'Модели распознавания речи (около 550 МБ)' {
+    # tiny hears the name «Джарвис», small writes the commands on a laptop without NVIDIA and without a Groq key.
+    # Downloaded now, so the first «Джарвис» is not met by a silent download.
+    $py = Join-Path $root '.venv\Scripts\python.exe'
+    Native $py @('-c', 'from faster_whisper import download_model as d; [d(m) for m in ("tiny", "small")]')
+}
 if ($todo.Contains('npm')) {
     Step 'Мост WhatsApp' { Push-Location whatsapp-bridge; try { Native $npm.Source @('install', '--no-fund', '--no-audit') } finally { Pop-Location } }
 }

@@ -289,9 +289,28 @@
     }));
     $("#capShow").onclick = () => api("/api/capsule", "POST").then(() => toast("Капсула открыта сверху экрана")).catch((e) => toast(e.message));
   };
+  /* «Слышит ли меня Джарвис»: the microphone's level live, and what to fix when he does not react to his name. */
+  function micMeter() {
+    const bar = $("#micBar"), txt = $("#micText"); if (!bar || !txt) return;
+    const lv = Math.min(1, (STATE.micLevel || 0) / 1400);
+    STATE.micPeak = Math.max(lv, (STATE.micPeak || 0) * 0.97);
+    bar.style.width = `${Math.round(lv * 100)}%`;
+    STATE.micSeen = (STATE.micSeen || 0) + (lv > 0.02 ? 1 : 0); STATE.micTicks = (STATE.micTicks || 0) + 1;
+    txt.textContent = lv > 0.02 ? "Слышу вас. Скажите «Джарвис», затем команду."
+      : STATE.micTicks > 40 && !STATE.micSeen ? "Микрофон молчит. Параметры Windows → Конфиденциальность и защита → Микрофон: включите «Разрешить классическим приложениям доступ к микрофону» и проверьте, что выбран нужный микрофон."
+      : "Скажите что-нибудь: полоска должна двигаться.";
+    setTimeout(micMeter, 120);
+  }
   SEC.voice = (el) => {
     const v = V3().voice || {}, f = V3().features || {};
+    STATE.micSeen = 0; STATE.micTicks = 0; setTimeout(micMeter, 60);
+    const keyOk = !!(V3().keys || {}).groq, gpu = !!(STATE.hud || {}).gpu;
     el.innerHTML = section("voice", "Голос", "Как Джарвис говорит, слушает и узнаёт вас. Голос, которым вы говорите, записывается один раз.",
+      panel("Слышит ли меня Джарвис", "Проверка для нового компьютера: если Джарвис не откликается на имя, причина обычно здесь.",
+        `<div class="mic-meter"><i id="micBar"></i></div><p class="sub" id="micText">Скажите что-нибудь: полоска должна двигаться.</p>
+        ${row("Ключ Groq", keyOk ? "есть — речь распознаётся в облаке, быстро" : "нет — речь распознаётся на этом компьютере, медленнее. Ключ бесплатный: console.groq.com/keys", keyOk ? '<span class="chip ok">есть</span>' : '<a class="btn sm primary" href="#/settings/ai">Вставить ключ</a>')}
+        ${row("Видеокарта NVIDIA", gpu ? "есть — локальная речь быстрая" : "нет — Джарвис сам выбрал лёгкую модель речи для процессора", `<span class="chip ${gpu ? "ok" : ""}">${gpu ? "есть" : "нет"}</span>`)}
+        ${row("Как звать", "«Джарвис» или «Эй, Джарвис», затем команду. Первый запуск может занять минуту: загружаются модели речи", "")}`) +
       panel("Узнавание вашего голоса", "Джарвис реагирует только на вас, если это включено ниже.", `
         ${row("Голос записан", V3().voice_enrolled ? "да — Джарвис узнаёт вас" : "нет — запишите голос", `<span class="chip ${V3().voice_enrolled ? "ok" : "warn"}">${V3().voice_enrolled ? "записан" : "не записан"}</span><button class="btn" id="btnEnroll">${V3().voice_enrolled ? "Записать заново" : "Записать голос"}</button>`)}
         ${row("Слушать только меня", "Чужие голоса и телевизор не будут запускать Джарвиса", sw("features", "voice_lock", f.voice_lock !== false, "Слушать только меня"))}

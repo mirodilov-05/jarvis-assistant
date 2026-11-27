@@ -450,3 +450,7 @@ body.home-hud .view { padding: 14px 22px 22px; }
 .robot-note { font-size: 12.5px; line-height: 1.5; }
 @media (max-width: 1000px) { .robot-stage { grid-template-columns: minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) { .rb-bot, .rb-shadow, .rb-ear .ring { animation: none !important; } }
+
+/* the microphone check in Settings → Голос */
+.mic-meter { height: 10px; border-radius: 5px; background: rgba(255, 255, 255, 0.07); overflow: hidden; margin: 4px 0 8px; }
+.mic-meter i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--ok), var(--accent)); transition: width 0.1s linear; }

@@ -619,7 +619,7 @@
     try { ws = new WebSocket(`ws://${location.host}/ws`); } catch { return; }
     ws.onmessage = (e) => {
       let ev; try { ev = JSON.parse(e.data); } catch { return; }
-      if (ev.type === "level") { JarvisCore && JarvisCore.set({ level: Math.min(1, ev.v / 1400) }); if (window.Robot) Robot.setLevel(Math.min(1, ev.v / 1400)); if (ev.s && ev.s !== STATUS) setStatus(ev.s); }
+      if (ev.type === "level") { STATE.micLevel = ev.v; JarvisCore && JarvisCore.set({ level: Math.min(1, ev.v / 1400) }); if (window.Robot) Robot.setLevel(Math.min(1, ev.v / 1400)); if (ev.s && ev.s !== STATUS) setStatus(ev.s); }
       else if (ev.type === "status") setStatus(ev.state);
       else if (ev.type === "message") { addExchange(ev); }
       else if (ev.type === "heard" && !ev.ok) { const y = $("#you"); if (y) y.textContent = "Не разобрал: " + ev.text; }

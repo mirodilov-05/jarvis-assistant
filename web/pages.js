@@ -224,7 +224,7 @@
           ${row("Анимации", "Выключите, если компьютер тормозит", `<label class="switch"><input type="checkbox" id="anim" ${p.anim ? "checked" : ""} aria-label="Анимации"><span></span></label>`)}`)}
       </div>
       <div class="grid-2" style="margin-top:var(--gap);grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
-        ${panel("Раскладка главной", "Выберите готовый набор или настройте виджеты на главной кнопкой «Настроить виджеты».", `<div class="pills" style="margin-bottom:12px">${Object.keys(PRESETS).map((n) => `<button class="chip ${n === "Полный" ? "on" : ""}" data-preset="${n}">${esc(n)}</button>`).join("")}</div>
+        ${panel("Раскладка главной", "Выберите готовый набор или настройте всё на главной кнопкой «Персонализация».", `<div class="pills" style="margin-bottom:12px">${Object.keys(PRESETS).map((n) => `<button class="chip ${n === "Полный" ? "on" : ""}" data-preset="${n}">${esc(n)}</button>`).join("")}</div>
           <div class="field"><label>Место ядра</label>${seg([["center", "Ядро и виджеты"], ["grid", "Сетка"], ["focus", "Только ядро"]], p.layout.mode, "data-mode")}</div>`)}
         ${panel("Сброс и перенос", "", `<div class="foot" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="btnExport">Сохранить настройки в файл</button><label class="btn" style="cursor:pointer">Загрузить из файла<input type="file" id="fileIn" accept="application/json" hidden></label><button class="btn danger" id="btnReset">Вернуть всё по умолчанию</button></div>`)}
       </div>`;

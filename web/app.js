@@ -147,7 +147,8 @@
     st.setProperty("--accent", p.a); st.setProperty("--accent-rgb", p.rgb); st.setProperty("--bg", p.bg);
     st.setProperty("--r", PREFS.radius + "px"); st.setProperty("--fs", PREFS.fs + "px");
     root.dataset.look = PREFS.look; root.dataset.density = PREFS.density; root.dataset.anim = PREFS.anim ? "on" : "off";
-    if (window.JarvisCore) { JarvisCore.setShape(p.shape, p.rgb); JarvisCore.setCore && JarvisCore.setCore(PREFS.core); }
+    const shape = PREFS.shape && PREFS.shape !== "auto" ? PREFS.shape : p.shape;     // the owner's figure, or the colour's own
+    if (window.JarvisCore) { JarvisCore.setShape(shape, p.rgb); JarvisCore.setCore && JarvisCore.setCore(PREFS.core); }
   }
 
   /* ---------- live data ---------- */
@@ -430,16 +431,17 @@
     if (mode === "robot" && window.Robot) cols = window.Robot.html();
     else if (center && sk === "ring") cols = `<svg class="ring-links" id="ringLinks" aria-hidden="true"></svg>${coreHtml()}${list.slice(0, 8).map(widgetShell).join("")}`;
     else if (center) cols = `<div class="col-w" id="colL" data-col="l">${l.map(widgetShell).join("")}</div>${coreHtml()}<div class="col-w" id="colR" data-col="r">${r.map(widgetShell).join("")}</div>`;
+    else if (mode === "focus") cols = coreHtml();          // only the core, large, in the middle
     else cols = `<div class="col-w" id="colL" data-col="l" style="grid-column:1/-1">${list.map(widgetShell).join("")}</div>`;
-    const hudLike = center || mode === "robot";
-    const modes = [["center", "Виджеты"], ["robot", "Робот"], ["grid", "Сетка"], ["focus", "Только ядро"]];
+    const hudLike = center || mode === "robot" || mode === "focus";
+    const modes = [["center", "Виджеты"], ["robot", "Робот"], ["grid", "Сетка"]];
     const toolbar = `<div class="dash-toolbar">
         ${hudLike ? `<div class="hud-title"><b>JARVIS PRIME OS <span>v3.3</span></b><small>Windows 11 · голосовой ассистент</small></div>` : ""}
         <span class="spacer"></span>
         ${center ? `<div class="seg skins" role="group" aria-label="Вид виджетов">${SKINS.map(([k, n, d]) => `<button type="button" data-act="skin" data-args='{"k":"${k}"}' aria-pressed="${sk === k}" title="${esc(d)}">${n}</button>`).join("")}</div>` : ""}
         <div class="seg" role="group" aria-label="Режим главной">${modes.map(([k, n]) => `<button type="button" data-act="mode" data-args='{"m":"${k}"}' aria-pressed="${mode === k}">${n}</button>`).join("")}</div>
-        ${mode === "robot" ? "" : `<button class="btn sm ${EDIT.on ? "primary" : ""}" data-act="edit" aria-pressed="${EDIT.on}">${svg("move")} ${EDIT.on ? "Готово" : "Настроить"}</button>
-        <button class="btn sm" data-act="addwidget" aria-label="Добавить виджет" title="Добавить виджет">${svg("plus")}</button>`}
+        <button class="btn sm primary" data-act="studio" data-args='{"tab":"look"}'>${svg("paint")} Персонализация</button>
+        ${mode === "robot" || mode === "focus" ? "" : `<button class="btn sm ${EDIT.on ? "primary" : ""}" data-act="edit" aria-pressed="${EDIT.on}" title="Переставлять виджеты прямо на главной">${svg("move")} ${EDIT.on ? "Готово" : "Переставить"}</button>`}
         ${center && EDIT.on ? `<button class="btn sm ghost" data-act="resetlayout" title="Сбросить порядок виджетов">Сброс</button>` : ""}
       </div>`;
     const kpi = center && sk === "datav" ? `<div class="kpis" id="kpis">${kpiHtml()}</div>` : "";
@@ -453,15 +455,79 @@
     document.body.classList.toggle("home-hud", hudLike);
     $("#view").innerHTML = `<div class="hud skin-${center ? sk : mode} ${EDIT.on ? "edit" : ""}">${toolbar}${kpi}<div class="dash mode-${mode} ${center ? "skin-" + sk : ""}" id="dash">${cols}</div>${dock}${ticker}</div>`;
     $("#view").dataset.page = "home";
-    if (center) mountCore();
+    if (center || mode === "focus") mountCore();
     if (mode === "robot" && window.Robot) window.Robot.mount();
     bindWidgetDnd();
     paintWidgets(true);
     requestAnimationFrame(layoutRing);
   }
+  /* ---------- Персонализация: like a phone's widget gallery. Every change shows at once. ---------- */
+  const STUDIO = { filter: "all" };
+  const LAYOUTS = [
+    ["center", "orbit", "Орбита", "HUD-панели с уголками вокруг ядра"], ["center", "datav", "Командный центр", "Табло цифр, тонкие рамки, бегущая строка"],
+    ["center", "ring", "Кольцо", "Виджеты по дуге вокруг ядра"], ["center", "glass", "Стекло", "Мягкие стеклянные карточки"],
+    ["center", "terminal", "Терминал", "Окна консоли и развёртка"], ["robot", "", "Робот", "Робот с эмоциями и вашим настроением"],
+    ["grid", "", "Сетка", "Только виджеты, плотной сеткой"], ["focus", "", "Только ядро", "Большое ядро без виджетов"],
+  ];
+  const SHAPES = [["auto", "Как у цвета"], ["rings", "Кольца"], ["dots", "Точки"], ["grid", "Сетка"], ["shield", "Щит"], ["orbits", "Орбиты"], ["none", "Без фигуры"]];
+  const WGROUPS = { "Компьютер": ["cpu", "programs", "top", "net", "battery", "sound", "display", "services", "lan", "logs"],
+    "Дела и время": ["tasks", "goals", "focus", "calendar", "clock", "macros", "history"], "Связь и дом": ["messengers", "tv", "weather"],
+    "Джарвис": ["brain", "memory", "docs", "shield", "show"] };
+  function thumb(mode, k) {
+    const panel = (n) => Array.from({ length: n }, () => "<i></i>").join("");
+    if (mode === "robot") return `<div class="th th-robot"><b></b></div>`;
+    if (mode === "focus") return `<div class="th th-focus"><b></b></div>`;
+    if (mode === "grid") return `<div class="th th-grid">${panel(6)}</div>`;
+    if (k === "ring") return `<div class="th th-ring"><b></b>${panel(6)}</div>`;
+    return `<div class="th th-cols th-${k}"><span>${panel(3)}</span><b></b><span>${panel(3)}</span></div>`;
+  }
+  function renderStudio(tab = "look") {
+    STUDIO.tab = tab;
+    document.body.classList.add("home-hud");
+    if (window.Robot) window.Robot.unmount();
+    const mode = PREFS.layout.mode, sk = skin(), shape = PREFS.shape || "auto";
+    const tabs = [["look", "Вид главной"], ["core", "Ядро и цвет"], ["widgets", "Виджеты"]];
+    let main = "";
+    if (tab === "look") {
+      main = `<p class="sub">Выберите, как будет выглядеть главная. Можно менять в любой момент.</p><div class="layouts">${LAYOUTS.map(([m, k, n, d]) => {
+        const on = mode === m && (!k || sk === k);
+        return `<button type="button" class="lay-card" data-act="st_layout" data-args='${esc(JSON.stringify({ mode: m, skin: k }))}' aria-pressed="${on}">${thumb(m, k)}<b>${esc(n)}</b><span>${esc(d)}</span></button>`;
+      }).join("")}</div>`;
+    } else if (tab === "core") {
+      main = `<h3>Ядро</h3><div class="opts">${[["globe", "Точечный глобус", "Земля из светящихся точек"], ["sphere", "Стеклянная сфера", "Сфера с волной голоса"]].map(([k, n, d]) => `<button type="button" class="opt-card" data-act="st_core" data-args='{"core":"${k}"}' aria-pressed="${(PREFS.core || "globe") === k}"><b>${n}</b><span>${d}</span></button>`).join("")}</div>
+        <h3>Фигура вокруг ядра</h3><div class="chips">${SHAPES.map(([k, n]) => `<button type="button" class="chip-btn" data-act="st_shape" data-args='{"shape":"${k}"}' aria-pressed="${shape === k}">${n}</button>`).join("")}</div>
+        <h3>Цвет</h3><div class="swatch-row">${PALETTES.map((p) => `<button type="button" class="sw" data-act="st_palette" data-args='{"id":"${p.id}"}' aria-pressed="${PREFS.palette === p.id}" style="--c:${p.a}"><i></i><span>${esc(p.name)}</span></button>`).join("")}</div>
+        <p class="sub">Ядро слева показывает выбор сразу. Тонкая настройка (стиль карточек, плотность, анимация) — в разделе «Внешний вид».</p>`;
+    } else {
+      const items = layoutItems(), f = STUDIO.filter;
+      const card = (id) => {
+        const def = widgetDef(id), it = itemOf(id); if (!def || !it) return "";
+        const on = it.on !== false;
+        if ((f === "on" && !on) || (f === "off" && on)) return "";
+        const seg = (act, key, opts) => `<div class="mini-seg">${opts.map(([v, n]) => `<button type="button" data-act="${act}" data-args='${esc(JSON.stringify({ id, [key]: v }))}' aria-pressed="${(it[key] || (key === "size" ? def.size : "l")) === v}">${n}</button>`).join("")}</div>`;
+        return `<div class="wcard ${on ? "on" : ""}"><div class="wprev">${widgetShell({ ...it, style: it.style })}</div>
+          <div class="wctl"><label class="row grow"><b class="ellipsis">${esc(def.name)}</b></label>${toggle(on, "st_on", { id }, (on ? "Убрать с главной: " : "Показать на главной: ") + def.name)}</div>
+          ${on ? `<div class="wctl small">${seg("st_size", "size", [["s", "S"], ["m", "M"], ["l", "L"]])}${seg("st_side", "col", [["l", "Слева"], ["r", "Справа"]])}</div>` : ""}</div>`;
+      };
+      const shown = items.filter((i) => i.on !== false).length;
+      main = `<div class="row wrap" style="gap:8px"><div class="seg">${[["all", "Все"], ["on", `На главной · ${shown}`], ["off", "Скрытые"]].map(([k, n]) => `<button type="button" data-act="st_filter" data-args='{"f":"${k}"}' aria-pressed="${f === k}">${n}</button>`).join("")}</div><span class="sub">Включите переключателем — виджет сразу появится на главной.</span></div>
+        ${Object.entries(WGROUPS).map(([g, ids]) => { const cards = ids.map(card).join(""); return cards ? `<h3>${g}</h3><div class="gallery">${cards}</div>` : ""; }).join("")}`;
+    }
+    $("#view").innerHTML = `<div class="studio" id="studio">
+        <header class="studio-head"><div><h2>Персонализация</h2><p class="sub">Всё меняется сразу. Нажмите «Готово», чтобы вернуться на главную.</p></div>
+          <div class="seg" role="tablist">${tabs.map(([k, n]) => `<button type="button" role="tab" data-act="st_tab" data-args='{"tab":"${k}"}' aria-pressed="${tab === k}">${n}</button>`).join("")}</div>
+          <button class="btn primary" data-act="studio_done">Готово</button></header>
+        <div class="studio-body"><aside class="studio-preview"><div class="core-disc"><canvas id="orb" role="img" aria-label="Так будет выглядеть ядро"></canvas>
+            <div class="core-label"><b>ДЖАРВИС</b><span id="stateTxt">предпросмотр</span></div></div>
+            <div class="sub" style="text-align:center">${esc((LAYOUTS.find(([m, k]) => m === mode && (!k || k === sk)) || [, , "—"])[2])} · ${esc(palette(PREFS.palette).name)}</div></aside>
+          <section class="studio-main">${main}</section></div></div>`;
+    $("#view").dataset.page = "home";
+    mountCore();
+    paintWidgets(true);
+  }
   function paintWidgets(force) {
     paintDock();
-    $$("#dash .w[data-w]").forEach((el) => {
+    $$("#dash .w[data-w], #studio .w[data-w]").forEach((el) => {
       const item = itemOf(el.dataset.w), def = widgetDef(el.dataset.w);
       if (!item || !def) return;
       const body = el.querySelector("[data-body]");
@@ -622,11 +688,22 @@
     async wmove({ id, d }) { moveWidget(id, d); },
     wsize({ id }) { const it = itemOf(id); const i = SIZES.indexOf(it.size || "s"); it.size = SIZES[(i + 1) % 3]; savePrefs(); renderDashboardShell(); },
     wstyle({ id }) { const it = itemOf(id); const order = [undefined, "solid", "minimal"]; it.style = order[(order.indexOf(it.style) + 1) % 3]; savePrefs(); renderDashboardShell(); },
-    whide({ id }) { itemOf(id).on = false; savePrefs(); renderDashboardShell(); toast("Скрыл. Вернуть: «Настроить виджеты» → «Добавить»"); },
+    whide({ id }) { itemOf(id).on = false; savePrefs(); renderDashboardShell(); toast("Скрыл. Вернуть: «Персонализация» → «Виджеты»"); },
     edit() { EDIT.on = !EDIT.on; renderDashboardShell(); },
     mode({ m }) { PREFS.layout.mode = m; savePrefs(); renderDashboardShell(); },
     skin({ k }) { PREFS.skin = k; if (PREFS.layout.mode !== "center") PREFS.layout.mode = "center"; savePrefs(); renderDashboardShell(); },
-    addwidget() { openAddWidget(); },
+    addwidget() { renderStudio("widgets"); },
+    studio({ tab = "look" } = {}) { EDIT.on = false; renderStudio(tab); },
+    studio_done() { renderDashboardShell(); },
+    st_tab({ tab }) { renderStudio(tab); },
+    st_layout({ mode, skin: k }) { PREFS.layout.mode = mode; if (k) PREFS.skin = k; savePrefs(); renderStudio("look"); },
+    st_core({ core }) { PREFS.core = core; savePrefs(); applyLook(); renderStudio("core"); },
+    st_shape({ shape }) { PREFS.shape = shape; savePrefs(); applyLook(); renderStudio("core"); },
+    st_palette({ id }) { PREFS.palette = id; savePrefs(); applyLook(); renderStudio("core"); },
+    st_filter({ f }) { STUDIO.filter = f; renderStudio("widgets"); },
+    st_on({ id }) { const it = itemOf(id); if (!it) return; it.on = it.on === false; if (it.on) it.col = it.col || "r"; savePrefs(); renderStudio("widgets"); },
+    st_size({ id, size }) { const it = itemOf(id); if (it) { it.size = size; savePrefs(); renderStudio("widgets"); } },
+    st_side({ id, col }) { const it = itemOf(id); if (it) { it.col = col; savePrefs(); renderStudio("widgets"); } },
   };
   async function hudAct(kind, body) {
     try {
@@ -646,21 +723,7 @@
     }
     savePrefs(); renderDashboardShell();
   }
-  function openAddWidget() {
-    const hidden = layoutItems().filter((i) => i.on === false);
-    const list = WIDGET_DEFS.map((w) => {
-      const it = itemOf(w.id), on = it && it.on !== false;
-      return `<label class="item"><span class="ico" style="width:26px;height:26px;border-radius:8px;background:rgba(var(--accent-rgb),.12);color:var(--accent);display:grid;place-items:center">${svg(w.icon)}</span><span class="grow"><b style="font-weight:550">${esc(w.name)}</b></span><label class="switch"><input type="checkbox" data-addw="${w.id}" ${on ? "checked" : ""} aria-label="${esc(w.name)}"><span></span></label></label>`;
-    }).join("");
-    const d = dialog(`<p>Включайте и выключайте виджеты. Порядок и место меняются кнопками на самих виджетах.</p><div class="list" id="addList">${list}</div>`, "Виджеты");
-    d.addEventListener("change", (e) => {
-      const t = e.target; if (!t.dataset.addw) return;
-      const it = itemOf(t.dataset.addw); if (!it) return;
-      it.on = t.checked; if (t.checked) it.col = it.col || "r";
-      savePrefs(); renderDashboardShell();
-    });
-    void hidden;
-  }
+
 
   /* ---------- widgets: range inputs and forms ---------- */
   document.addEventListener("input", (e) => {
@@ -724,7 +787,7 @@
     const view = $("#view");
     if (page === "home" || !window.PAGES || !PAGES[page]) {
       STATE.live = "home";
-      setHeader("Главная", "Ядро и ваши виджеты. Настройте любой виджет кнопкой «Настроить виджеты».", "");
+      setHeader("Главная", "Ядро и ваши виджеты. Вид меняется кнопкой «Персонализация».", "");
       view.innerHTML = ""; renderDashboardShell(); return;
     }
     const p = PAGES[page];
@@ -746,8 +809,9 @@
     { label: "Самопрезентация с голосом", go: () => ACT.show_start({ deck: "about", auto: true }) },
     { label: "Отчёт за месяц на весь экран", go: () => ACT.show_start({ deck: "report" }) },
     { label: "Проанализировать ноутбук", go: () => openAnalysis && openAnalysis() },
-    { label: "Настроить виджеты", go: () => { location.hash = "#/"; setTimeout(() => ACT.edit(), 50); } },
-    { label: "Добавить виджет", go: () => { location.hash = "#/"; setTimeout(openAddWidget, 60); } },
+    { label: "Переставить виджеты на главной", go: () => { location.hash = "#/"; setTimeout(() => ACT.edit(), 50); } },
+    { label: "Персонализация: вид главной, ядро, цвет", go: () => { location.hash = "#/"; setTimeout(() => renderStudio("look"), 60); } },
+    { label: "Добавить или убрать виджеты", go: () => { location.hash = "#/"; setTimeout(() => renderStudio("widgets"), 60); } },
     { label: "Настроить голос", go: () => (location.hash = "#/settings/voice") },
     { label: "Подключить WhatsApp / Telegram / почту", go: () => (location.hash = "#/settings/messengers") },
   ];

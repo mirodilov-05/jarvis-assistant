@@ -123,7 +123,7 @@
     el.innerHTML = `<div class="dash-toolbar"><div class="seg" role="tablist"><button type="button" role="tab" data-tab="macros" aria-pressed="${tab === "macros"}">Цепочки</button><button type="button" role="tab" data-tab="history" aria-pressed="${tab === "history"}">История</button></div><span class="spacer"></span><form class="form-row" id="cmdForm" style="flex:0 1 420px"><input type="search" id="cmdIn" placeholder="Быстро: напишите команду Джарвису" aria-label="Команда" style="height:36px"><button class="btn" type="submit">Отправить</button></form></div>
       ${tab === "macros" ? `<div class="grid-2"><div class="stack">${(macros.items || []).map((m) => `<div class="cmd-card"><div class="grow"><b style="font-size:15px">«${esc(m.phrase)}»</b><p>${(m.actions || []).map((a) => esc(a.value)).join(" → ")}</p></div><button class="btn primary" data-run="${esc(m.id)}">Запустить</button><button class="btn sm icon ghost" data-mdel="${esc(m.id)}" aria-label="Удалить">${svg("x")}</button></div>`).join("") || `<div class="empty"><b>Цепочек пока нет</b>Создайте справа или скажите «Джарвис, запомни команду …»</div>`}</div>
         ${panel("Новая цепочка", "Одна команда в строке. Например: «открой ютуб», «громкость 30», «напомни через 25 минут перерыв»", `<form id="macroForm" class="col"><div class="field"><label for="mPhrase">Фраза для запуска</label><input id="mPhrase" type="text" maxlength="60" placeholder="например: вечер дома" required></div><div class="field"><label for="mSteps">Команды</label><textarea id="mSteps" rows="5" placeholder="включи фокус на 25 минут&#10;включи музыку для работы" required></textarea></div><div><button class="btn primary" type="submit">Сохранить цепочку</button></div></form>`)}</div>`
-      : `<div class="panel"><form class="form-row" id="histSearch" style="margin-bottom:12px"><div class="field grow"><input type="search" id="histQ" value="${esc(HQ)}" placeholder="Поиск по истории: слово из команды или ответа" aria-label="Поиск по истории"></div><button class="btn" type="submit">Найти</button></form><div class="sub" style="margin-bottom:8px">${HQ ? `Найдено: ${hist.length}` : `Показаны последние ${hist.length} из ${total}. Вся история хранится в data/history.jsonl.`}</div><div class="list">${hist.map((h) => `<div class="hist-item"><div class="meta"><span>${esc(h.time || "")}</span><span class="chip">${esc(h.source || "")}</span><span class="chip">${esc(h.skill || h.tools || "ответ")}</span></div><div class="q">${esc(h.user || "")}</div><div class="a">${esc(h.reply || "")}</div><div class="row" style="gap:6px"><button class="btn sm ghost" data-again="${esc(h.user || "")}">Повторить</button></div></div>`).join("") || `<div class="empty"><b>История пуста</b>Здесь появится каждая команда и ответ</div>`}</div></div>`}`;
+      : `<div class="panel"><form class="form-row" id="histSearch" style="margin-bottom:12px"><div class="field grow"><input type="search" id="histQ" value="${esc(HQ)}" placeholder="Поиск по истории: слово из команды или ответа" aria-label="Поиск по истории"></div><button class="btn" type="submit">Найти</button></form><div class="sub" style="margin-bottom:8px">${HQ ? `Найдено: ${hist.length}` : `Показаны последние ${hist.length} из ${total}. Вся история хранится в data/history.jsonl.`}</div><div class="list">${hist.map((h) => `<div class="hist-item"><div class="meta"><span>${esc(h.time || "")}</span><span class="chip">${esc(h.source || "")}</span><span class="chip">${esc(h.skill || h.tools || "ответ")}</span>${h.secs != null ? `<span class="chip" title="Время ответа">⏱ ${esc(String(h.secs).replace(".", ","))} с</span>` : ""}</div><div class="q">${esc(h.user || "")}</div><div class="a">${esc(h.reply || "")}</div><div class="row" style="gap:6px"><button class="btn sm ghost" data-again="${esc(h.user || "")}">Повторить</button></div></div>`).join("") || `<div class="empty"><b>История пуста</b>Здесь появится каждая команда и ответ</div>`}</div></div>`}`;
     el.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => drawCommands(el, b.dataset.tab)));
     const hs = el.querySelector("#histSearch");
     if (hs) hs.addEventListener("submit", (e) => { e.preventDefault(); HQ = $("#histQ").value.trim(); drawCommands(el, "history"); });
@@ -301,6 +301,51 @@
       : "Скажите что-нибудь: полоска должна двигаться.";
     setTimeout(micMeter, 120);
   }
+  /* Each voice's own speed and tone (settings section «voices»: <id>_speed, <id>_tone, in percent). */
+  const PIPER_NAMES = { dmitri: "Дмитрий", denis: "Денис", irina: "Ирина", ruslan: "Руслан" };
+  function voiceRows(v) {
+    const prof = v.profiles || {};
+    const list = [...(v.piper_voices && v.piper_voices.length ? v.piper_voices : ["dmitri", "denis", "irina", "ruslan"]).map((n) => ({ id: `piper_${n}`, engine: "piper", voice: n, lang: "ru", name: PIPER_NAMES[n] || n, tag: "Piper · без интернета", main: v.engine !== "edge" && v.piper === n })),
+      { id: "edge_ru", engine: "edge", lang: "ru", name: "Русский", tag: "Microsoft · Dmitry", main: v.engine === "edge" },
+      { id: "edge_en", engine: "edge", lang: "en", name: "Английский", tag: "Microsoft · Andrew" },
+      { id: "edge_ja", engine: "edge", lang: "ja", name: "Японский", tag: "Microsoft · Keita" }];
+    const slider = (x, key, min, max) => { const val = Number(prof[`${x.id}_${key}`] ?? 0);
+      return `<label class="ve-sl"><span>${key === "speed" ? "Скорость" : "Тон"} <b data-out="${x.id}_${key}">${val > 0 ? "+" : ""}${val}%</b></span>
+        <input type="range" class="range" min="${min}" max="${max}" step="5" value="${val}" data-ve="${x.id}" data-key="${key}" style="--v:${((val - min) / (max - min)) * 100}%" aria-label="${key === "speed" ? "Скорость" : "Тон"}: ${esc(x.name)}"></label>`; };
+    return list.map((x) => `<div class="ve-row ${x.main ? "main" : ""}" data-row="${x.id}" data-engine="${x.engine}" data-voice="${esc(x.voice || "")}" data-lang="${x.lang}">
+        <div class="ve-name"><b>${esc(x.name)}</b><small>${esc(x.tag)}${x.main ? " · основной" : ""}</small></div>
+        ${slider(x, "speed", -40, 60)}${slider(x, "tone", -25, 25)}
+        <div class="ve-btns"><button type="button" class="btn sm primary" data-vplay="${x.id}">Прослушать</button>${x.engine === "piper" && !x.main ? `<button type="button" class="btn sm" data-vmain="${esc(x.voice)}">Сделать основным</button>` : ""}<button type="button" class="btn sm ghost" data-vreset="${x.id}">Сброс</button></div></div>`).join("");
+  }
+  function bindVoiceEditor(el) {
+    const row = (id) => el.querySelector(`[data-row="${id}"]`);
+    const vals = (id) => ({ speed: Number(row(id).querySelector('[data-key="speed"]').value), tone: Number(row(id).querySelector('[data-key="tone"]').value) });
+    el.querySelectorAll("[data-ve]").forEach((inp) => {
+      inp.addEventListener("input", () => {
+        const out = el.querySelector(`[data-out="${inp.dataset.ve}_${inp.dataset.key}"]`), n = Number(inp.value);
+        if (out) out.textContent = `${n > 0 ? "+" : ""}${n}%`;
+        inp.style.setProperty("--v", `${((n - Number(inp.min)) / (Number(inp.max) - Number(inp.min))) * 100}%`);
+      });
+      inp.addEventListener("change", () => api("/api/settings", "POST", { section: "voices", key: `${inp.dataset.ve}_${inp.dataset.key}`, value: Number(inp.value) }).catch((e) => toast(e.message)));
+    });
+    el.querySelectorAll("[data-vplay]").forEach((b) => b.addEventListener("click", () => {
+      const r = row(b.dataset.vplay);
+      api("/api/voice/preview", "POST", { engine: r.dataset.engine, voice: r.dataset.voice, lang: r.dataset.lang, ...vals(b.dataset.vplay) }).catch((e) => toast(e.message));
+    }));
+    el.querySelectorAll("[data-vreset]").forEach((b) => b.addEventListener("click", async () => {
+      const id = b.dataset.vreset;
+      for (const key of ["speed", "tone"]) {
+        await api("/api/settings", "POST", { section: "voices", key: `${id}_${key}`, value: 0 }).catch(() => {});
+        const inp = row(id).querySelector(`[data-key="${key}"]`); inp.value = 0; inp.dispatchEvent(new Event("input"));
+      }
+      toast("Голос вернулся к обычному");
+    }));
+    el.querySelectorAll("[data-vmain]").forEach((b) => b.addEventListener("click", async () => {
+      await api("/api/settings", "POST", { section: "voice", key: "piper_voice_ru", value: b.dataset.vmain });
+      await api("/api/settings", "POST", { section: "voice", key: "tts_engine_ru", value: "piper" });
+      toast("Основной голос: " + (PIPER_NAMES[b.dataset.vmain] || b.dataset.vmain)); await pollSlow(); SEC.voice(el.closest("#setBody") || el);
+    }));
+  }
   SEC.voice = (el) => {
     const v = V3().voice || {}, f = V3().features || {};
     STATE.micSeen = 0; STATE.micTicks = 0; setTimeout(micMeter, 60);
@@ -321,9 +366,12 @@
         ${row("Звуки интерфейса", "Короткие сигналы «слушаю», «готово»", sw("voice", "ui_sounds", v.ui_sounds !== false, "Звуки"))}
         ${row("Тише музыка, когда говорю", "Во сколько раз приглушать музыку и видео", `<input class="range" type="range" min="0" max="100" value="${Math.round((v.duck_level ?? 0.15) * 100)}" data-set="voice|duck_level|num" style="width:200px;--v:${Math.round((v.duck_level ?? 0.15) * 100)}%" aria-label="Приглушение">`)}
         ${row("Проверить голос", "Джарвис скажет короткую фразу", `<button class="btn" id="btnSay">Послушать</button>`)}`) +
+      panel("Редактор голосов", "Скорость и тон для каждого голоса. «Прослушать» говорит с тем, что стоит на ползунках; изменения сохраняются сразу.",
+        `<div class="voice-ed">${voiceRows(v)}</div>`) +
       callout("", "Как это работает", `<p>Первый запуск проводит через запись голоса. Потом Джарвис слушает фразы «Джарвис», «Эй, Джарвис» и команды. Полный список имён — в файле config.toml, раздел [wake].</p>`));
     $("#btnEnroll").onclick = async (e) => { await busy(e.currentTarget, () => api("/api/voice/enroll", "POST")); toast("Читайте текст. Запись идёт около 20 секунд."); };
     $("#btnSay").onclick = () => api("/api/say", "POST", { text: "Слушаю вас. Так звучит мой голос." }).catch((e) => toast(e.message));
+    bindVoiceEditor(el);
     el.querySelectorAll("[data-eng]").forEach((b) => b.addEventListener("click", async () => { await api("/api/settings", "POST", { section: "voice", key: "tts_engine_ru", value: b.dataset.eng }); toast("Голос переключён"); await pollSlow(); SEC.voice(el); }));
   };
 

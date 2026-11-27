@@ -180,6 +180,17 @@ def _sentences(text: str, max_len: int = 220) -> list[str]:
     return out
 
 
+def voice_profile(vid: str, opts: dict | None = None) -> tuple[float, float]:
+    """(speed %, tone %) of one voice: piper_<name> or edge_<lang>. A preview passes its own values in opts."""
+    o = opts or {}
+    sp = o.get("speed", core.setting("voices", f"{vid}_speed", 0))
+    tn = o.get("tone", core.setting("voices", f"{vid}_tone", 0))
+    try:
+        return max(-40.0, min(60.0, float(sp))), max(-25.0, min(25.0, float(tn)))
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+
+
 class Speaker:
     def __init__(self) -> None:
         self._q: queue.Queue[tuple[str, str, int]] = queue.Queue()
@@ -194,10 +205,11 @@ class Speaker:
         self.gen = 0                 # stop() makes everything said before it void
         threading.Thread(target=self._run, daemon=True, name="tts").start()
 
-    def say(self, text: str, lang: str = "ru") -> None:
+    def say(self, text: str, lang: str = "ru", opts: dict | None = None) -> None:
+        """opts (a preview from the voice editor): engine, voice, speed, tone."""
         text = speakable(text or "")
         if text:
-            self._q.put((text, lang, self.gen))
+            self._q.put((text, lang, self.gen, opts or {}))
 
     def stop(self) -> None:
         self.gen += 1
@@ -228,16 +240,20 @@ class Speaker:
             self._piper[name] = PiperVoice.load(str(path))
         return self._piper[name]
 
-    def _piper_say(self, text: str) -> bool:
+    def _piper_say(self, text: str, opts: dict | None = None) -> bool:
         from piper import SynthesisConfig
 
-        voice = self._piper_voice(cfg("voice", "piper_voice_ru", "dmitri"))
+        vname = (opts or {}).get("voice") or cfg("voice", "piper_voice_ru", "dmitri")
+        voice = self._piper_voice(vname)
         if voice is None:
             return False
         rate = int(cfg("voice", "tts_rate", 1))
-        syn = SynthesisConfig(length_scale=max(0.6, 1.0 - rate * 0.04), noise_scale=0.6, noise_w_scale=0.7)
+        speed, tone = voice_profile(f"piper_{vname}", opts)
+        pitch = 1.0 + tone / 100.0
+        # a higher tone without a faster voice: made slower by the same factor it is then played faster
+        syn = SynthesisConfig(length_scale=max(0.45, (1.0 - rate * 0.04) / (1.0 + speed / 100.0) * pitch),
+                              noise_scale=0.6, noise_w_scale=0.7)
         stream = None
-        vname = cfg("voice", "piper_voice_ru", "dmitri")
         try:
             for chunk in voice.synthesize(text, syn_config=syn):   # one chunk per sentence: starts talking at once
                 if self._stop.is_set():
@@ -247,7 +263,7 @@ class Speaker:
                     threading.Thread(target=vp.set_tts_voice, args=(vname, chunk.audio_int16_array, chunk.sample_rate),
                                      daemon=True).start()
                 if stream is None:
-                    stream = sd.OutputStream(samplerate=chunk.sample_rate, channels=1, dtype="int16", latency="low")
+                    stream = sd.OutputStream(samplerate=int(chunk.sample_rate * pitch), channels=1, dtype="int16", latency="low")
                     stream.start()
                 self._write(stream, chunk.audio_int16_array)
                 self._write(stream, np.zeros(int(chunk.sample_rate * 0.12), dtype=np.int16))  # pause between sentences
@@ -278,7 +294,7 @@ class Speaker:
                    "en": "en-US-AndrewNeural",      # warm, confident: a presenter's voice
                    "ja": "ja-JP-KeitaNeural"}
 
-    def _edge_synth(self, text: str, voice: str, timeout: float, tries: int) -> bytes | None:
+    def _edge_synth(self, text: str, voice: str, timeout: float, tries: int, rate: str = "+0%", pitch: str = "+0Hz") -> bytes | None:
         """One sentence as MP3 bytes from Microsoft's voices (a short piece: it arrives in about a second)."""
         import edge_tts
 
@@ -286,8 +302,7 @@ class Speaker:
             # The audio of a sentence arrives in ~1.5 s, but closing Microsoft's connection sometimes hangs for long:
             # once audio has come and then 1.5 s pass with nothing new, the sentence is complete.
             buf = bytearray()
-            comm = edge_tts.Communicate(text, voice, rate=str(cfg("voice", "edge_rate", "+0%")),
-                                        pitch=str(cfg("voice", "edge_pitch", "+0Hz")))
+            comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
             it = comm.stream().__aiter__()
             while True:
                 try:
@@ -312,7 +327,7 @@ class Speaker:
                 time.sleep(0.3)
         return None
 
-    def _edge(self, text: str, lang: str) -> bool:
+    def _edge(self, text: str, lang: str, opts: dict | None = None) -> bool:
         """Speaks sentence by sentence: the next one is prepared while the current one plays.
 
         Before, the whole text was made at once with a 6-second limit: a long Japanese or English slide never fitted,
@@ -323,6 +338,13 @@ class Speaker:
         if time.time() < self._edge_off_until:
             return False
         voice = cfg("voice", f"edge_voice_{lang}") or self.EDGE_VOICES.get(lang, "en-US-AndrewNeural")
+        speed, tone = voice_profile(f"edge_{lang}", opts)
+        base = str(cfg("voice", "edge_rate", "+0%")).rstrip("%")
+        try:
+            speed += float(base)
+        except ValueError:
+            pass
+        rate, pitch = f"{round(speed):+d}%", f"{round(tone * 1.6):+d}Hz"      # tone %: about 1.6 Hz per percent
         parts = _sentences(text, 220 if lang != "ja" else 90)
         if not parts:
             return True
@@ -332,11 +354,11 @@ class Speaker:
         played = False
         pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="edge")
         try:
-            fut = pool.submit(self._edge_synth, parts[0], voice, first_timeout, tries)
+            fut = pool.submit(self._edge_synth, parts[0], voice, first_timeout, tries, rate, pitch)
             for i in range(len(parts)):
                 data = fut.result()
                 if i + 1 < len(parts):
-                    fut = pool.submit(self._edge_synth, parts[i + 1], voice, timeout, tries)
+                    fut = pool.submit(self._edge_synth, parts[i + 1], voice, timeout, tries, rate, pitch)
                 if not data:
                     if not played:
                         self._edge_off_until = time.time() + 300      # unreliable now: the local voice for 5 minutes
@@ -416,7 +438,7 @@ class Speaker:
         except Exception:  # noqa: BLE001
             log.exception("Piper voice failed to load")
         while True:
-            text, lang, gen = self._q.get()
+            text, lang, gen, opts = self._q.get()
             if gen != self.gen:
                 continue
             self._stop.clear()
@@ -428,12 +450,12 @@ class Speaker:
             try:
                 sapi.Rate = int(cfg("voice", "tts_rate", 1))
                 sapi.Volume = 45 if core.feature("quiet_voice") else 100
-                engine = cfg("voice", f"tts_engine_{lang}", "piper" if lang == "ru" else "edge")
+                engine = opts.get("engine") or cfg("voice", f"tts_engine_{lang}", "piper" if lang == "ru" else "edge")
                 done = False
                 if engine == "piper" and lang == "ru":
-                    done = self._piper_say(text)
+                    done = self._piper_say(text, opts)
                 elif engine == "edge":
-                    done = self._edge(text, lang) or (lang == "ru" and self._piper_say(text))
+                    done = self._edge(text, lang, opts) or (lang == "ru" and self._piper_say(text))
                 if not done:
                     self._sapi_lang(sapi, re.sub(r"[ʻʼ’‘`]", "'", text), lang if lang in ("en", "ja") else "ru")
             except Exception:  # noqa: BLE001
@@ -1555,7 +1577,8 @@ def handle(text: str, lang: str, source: str, speak: bool, echo: bool = True, al
         speak = False
     if source != "голос":
         core.FOLLOWUP.clear()
-    core.emit({"type": "message", "role": "jarvis", "text": reply, "lang": lang, "source": source})
+    core.emit({"type": "message", "role": "jarvis", "text": reply, "lang": lang, "source": source,
+               "secs": core.LAST_ACTION.get("secs")})
     if core.mode() == "quiet" and source != "голос-срочно":
         speak = False     # «Тихий» character: answers only on screen
     macros = _plugin("macros")
@@ -1814,7 +1837,8 @@ def run_server() -> None:
                       "edge": cfg("voice", "edge_voice_ru", "ru-RU-DmitryNeural"), "edge_rate": cfg("voice", "edge_rate", "+0%"),
                       "edge_pitch": cfg("voice", "edge_pitch", "+0Hz"), "ui_sounds": bool(cfg("voice", "ui_sounds", True)),
                       "duck_level": float(cfg("voice", "duck_level", 0.15)),
-                      "piper_voices": sorted(p.name.split("-")[1] for p in VOICES_DIR.glob("ru_RU-*-medium.onnx"))},
+                      "piper_voices": sorted(p.name.split("-")[1] for p in VOICES_DIR.glob("ru_RU-*-medium.onnx")),
+                      "profiles": {k: v for k, v in (core.CONFIG.get("voices") or {}).items()}},
             "onboarded": bool(core.setting("ui", "onboarded", False)),
             "vpn": {"tunnel": core.setting("vpn", "tunnel", "")},
             "performance": {"game_mode": bool(core.setting("performance", "game_mode", True))},
@@ -1824,6 +1848,18 @@ def run_server() -> None:
     async def ui_open(r):
         body = await r.json()
         core.emit({"type": "open", "panel": str(body.get("panel", "settings")), "section": str(body.get("section", ""))})
+        return web.json_response({"ok": True})
+
+    async def voice_preview(r):
+        """The voice editor's «Прослушать»: one phrase in that voice, with the speed and tone on the sliders."""
+        body = await r.json()
+        lang = body.get("lang") if body.get("lang") in ("ru", "en", "ja") else "ru"
+        sample = {"ru": "Здравствуйте. Так звучит мой голос с этими настройками.", "en": "Hello. This is how my voice sounds with these settings.",
+                  "ja": "こんにちは。この設定では、私の声はこのように聞こえます。"}[lang]
+        opts = {"engine": "piper" if body.get("engine") == "piper" else "edge", "voice": str(body.get("voice", ""))[:20],
+                "speed": body.get("speed", 0), "tone": body.get("tone", 0)}
+        speaker.stop()
+        speaker.say(sample, lang, opts)
         return web.json_response({"ok": True})
 
     async def say(r):
@@ -2291,7 +2327,7 @@ def run_server() -> None:
         lang = core.detect_lang(text)
         speak = bool(body.get("speak", cfg("voice", "speak_text_replies", False)))
         reply = await asyncio.to_thread(handle, text, lang, "текст", speak)
-        return web.json_response({"reply": reply})
+        return web.json_response({"reply": reply, "secs": core.LAST_ACTION.get("secs")})
 
     async def listen(_r):
         if LISTENER:
@@ -2497,7 +2533,7 @@ def run_server() -> None:
         web.delete("/api/macros/{id}", macros_delete), web.post("/api/macros/{id}/run", macros_run),
         web.post("/api/pack", pack_set), web.post("/api/translate", translate), web.post("/api/translate/live", translate_live),
         web.get("/api/remote", remote_get), web.post("/api/remote", remote_set),
-        web.post("/api/capsule", capsule), web.post("/api/window/hide", window_hide), web.post("/api/say", say), web.post("/api/ui/open", ui_open),
+        web.post("/api/capsule", capsule), web.post("/api/window/hide", window_hide), web.post("/api/say", say), web.post("/api/voice/preview", voice_preview), web.post("/api/ui/open", ui_open),
         web.get("/api/state", state), web.post("/api/command", command),
         web.get("/api/history", history_get), web.get("/api/show", show_get), web.get("/api/show/audio/{name}", show_audio),
         web.get("/api/personalize", personalize_get), web.post("/api/personalize", personalize_post),

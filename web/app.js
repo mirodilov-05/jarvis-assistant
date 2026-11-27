@@ -635,18 +635,26 @@
   }
   function addExchange(ev) {
     if (ev.role === "user") { const y = $("#you"); if (y) y.textContent = "Вы: " + ev.text; }
-    else { STATE.lastReply = ev.text; const h = $("#him"); if (h) h.textContent = ev.text; if (window.Robot) window.Robot.onReply(ev.text); }
+    else { STATE.lastReply = ev.text; const h = $("#him"); if (h) h.textContent = ev.text; showSecs(ev.secs); if (window.Robot) window.Robot.onReply(ev.text); }
     if (STATE.live === "commands" && window.PAGES?.commands?.onData) PAGES.commands.onData(null, true);
     pollSlow();
   }
 
+  /** «⏱ 0,8 с» under the answer: how long Jarvis took to answer. */
+  function showSecs(secs) {
+    const fb = $("#fbMsg"); if (!fb) return;
+    fb.textContent = secs == null ? "" : `⏱ ${Number(secs).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} с`;
+    fb.title = secs == null ? "" : "Столько секунд Джарвис думал над ответом";
+  }
   /* ---------- conversation on the home screen ---------- */
   async function sendText(text) {
     if (!text) return;
     const y = $("#you"); if (y) y.textContent = "Вы: " + text;
     try {
+      const t0 = performance.now();
       const r = await api("/api/command", "POST", { text, speak: false });
       const h = $("#him"); if (h && r.reply) h.textContent = r.reply;
+      showSecs(r.secs ?? (performance.now() - t0) / 1000);
     } catch (e) { toast("Не получилось: " + e.message); }
     pollHud();
   }

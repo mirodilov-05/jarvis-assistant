@@ -454,3 +454,14 @@ body.home-hud .view { padding: 14px 22px 22px; }
 /* the microphone check in Settings → Голос */
 .mic-meter { height: 10px; border-radius: 5px; background: rgba(255, 255, 255, 0.07); overflow: hidden; margin: 4px 0 8px; }
 .mic-meter i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--ok), var(--accent)); transition: width 0.1s linear; }
+
+/* the voice editor in Settings → Голос */
+.voice-ed { display: grid; gap: 10px; }
+.ve-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(160px, 1.2fr) minmax(160px, 1.2fr) auto; gap: 16px; align-items: center;
+  padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.02); }
+.ve-row.main { border-color: rgba(var(--accent-rgb), 0.5); background: rgba(var(--accent-rgb), 0.06); }
+.ve-name { display: grid; } .ve-name b { font-size: 14.5px; } .ve-name small { color: var(--text-3); font-size: 12px; }
+.ve-sl { display: grid; gap: 4px; font-size: 12px; color: var(--text-2); } .ve-sl b { color: var(--text); font-family: var(--mono); }
+.ve-sl .range { width: 100%; }
+.ve-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 1100px) { .ve-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .ve-btns { grid-column: 1 / -1; justify-content: flex-start; } }

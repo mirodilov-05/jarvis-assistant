@@ -660,7 +660,7 @@ def add_history(source: str, user: str, reply: str, lang: str, engine: str) -> N
     import json
     rec = {"time": now().strftime("%Y-%m-%d %H:%M:%S"), "source": source, "lang": lang, "user": user,
            "reply": reply, "skill": LAST_ACTION.get("skill", ""), "tools": LAST_ACTION.get("tools", ""),
-           "engine": engine}
+           "engine": engine, "secs": LAST_ACTION.get("secs")}
     with file_lock:
         with HISTORY_FILE.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -724,7 +724,9 @@ def process(text: str, lang: str, source: str) -> str:
     the history, the day log, the episodic memory and the learning store. A crash in a skill is answered
     and kept too, so nothing said to Jarvis is lost.
     """
-    LAST_ACTION.update(skill="", tools="")
+    import time as _time
+    t0 = _time.perf_counter()
+    LAST_ACTION.update(skill="", tools="", secs=None)
     corrected = _note_correction(text)
     try:
         reply = styled(route(text, lang, source, CONFIG), lang)
@@ -738,6 +740,7 @@ def process(text: str, lang: str, source: str) -> str:
             reply = f"{line} {reply}".strip()
     except Exception:  # noqa: BLE001
         log.exception("emotion failed")
+    LAST_ACTION["secs"] = round(_time.perf_counter() - t0, 2)       # how long the answer took, shown under it
     _after_turn(text, reply, source, corrected)
     try:
         log_exchange(source, lang, text, reply)

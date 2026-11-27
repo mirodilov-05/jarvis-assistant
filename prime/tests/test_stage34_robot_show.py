@@ -99,6 +99,41 @@ def test_a_new_laptop_hears_its_name_without_a_key_or_nvidia():
     check("Settings → Голос shows the microphone live and what to fix", "Слышит ли меня Джарвис" in js and "Разрешить классическим приложениям" in js)
 
 
+def test_voices_have_their_own_speed_and_tone():
+    src = (ROOT / "assistant.py").read_text(encoding="utf-8")
+    start, end = src.index("def voice_profile"), src.index("class Speaker:")
+    import core
+    ns = {"core": core}
+    exec(src[start:end], ns)
+    vp = ns["voice_profile"]
+    from unittest import mock
+    with mock.patch.object(core, "setting", side_effect=lambda s, k, d=None: {"piper_irina_speed": 20, "piper_irina_tone": -10}.get(k, d)):
+        check("a saved voice profile is read", vp("piper_irina") == (20.0, -10.0))
+        check("the preview's own values win", vp("piper_irina", {"speed": 5, "tone": 3}) == (5.0, 3.0))
+        check("values are kept in a safe range", vp("edge_en", {"speed": 500, "tone": -90}) == (60.0, -25.0))
+    check("Piper keeps the speed when the tone changes", "* pitch" in src and "samplerate=int(chunk.sample_rate * pitch)" in src)
+    check("Microsoft voices get their rate and pitch", 'rate, pitch = f"{round(speed):+d}%", f"{round(tone * 1.6):+d}Hz"' in src)
+    check("the editor can play any voice", 'web.post("/api/voice/preview", voice_preview)' in src)
+    js = (ROOT / "web" / "pages.js").read_text(encoding="utf-8")
+    check("Settings has the voice editor for all voices", "Редактор голосов" in js and "edge_ja" in js and "Сделать основным" in js)
+
+
+def test_each_answer_shows_how_many_seconds_it_took():
+    import json
+    import tempfile
+    import core
+    from unittest import mock
+    tmp = Path(tempfile.mkdtemp())
+    with mock.patch.object(core, "DATA", tmp), mock.patch.object(core, "HISTORY_FILE", tmp / "h.jsonl"), \
+            mock.patch.object(core, "route", side_effect=lambda *a: __import__("time").sleep(0.05) or "Готово."), \
+            mock.patch.object(core, "_after_turn"), mock.patch.object(core, "_note_correction", return_value=False):
+        core.process("который час", "ru", "текст")
+        row = json.loads((tmp / "h.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    check("the answer time is measured and kept in the history", isinstance(row.get("secs"), float) and row["secs"] >= 0.05)
+    js = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    check("the home screen shows it under the answer", "function showSecs(" in js and "⏱" in js)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

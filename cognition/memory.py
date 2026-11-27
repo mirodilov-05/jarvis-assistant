@@ -85,12 +85,13 @@ def habits(limit: int = 8, path=None) -> list[dict]:
 def recall(query: str, k: int = 3, path=None, lessons_path=None) -> dict:
     """The four layers at once. Meaning (MiniLM) plus the same words, so it still works when the model is off."""
     q = db.embed_one(query)
-    qw = set(WORD.findall(query.lower()))
+    qw = {w for w in WORD.findall(query.lower()) if len(w) > 2}   # short words (я, и, в) match everything
 
     def rank(vecs, texts):
+        # with the meaning model, words are a small bonus; without it, words are the whole search
         sem = db.cosine(q, vecs)
         kw = np.array([len(qw & set(WORD.findall(t.lower()))) / max(1, len(qw)) for t in texts], dtype=np.float32)
-        return sem + 0.3 * kw
+        return sem + (0.3 if q is not None else 1.0) * kw
 
     threshold = 0.3 if q is not None else 0.2
     with db.conn(path) as c:
@@ -98,15 +99,16 @@ def recall(query: str, k: int = 3, path=None, lessons_path=None) -> dict:
         fs = [dict(r) for r in c.execute("SELECT * FROM facts").fetchall()]
     les = lstore.lessons(200, lessons_path)
     e_s = rank([db.from_blob(e["vec"]) for e in eps], [e["user_text"] + " " + e["reply"] for e in eps])
-    e_rank = sorted(((float(s) * importance(e["valence"], bool(e["mistake"]), e["created"]), e) for s, e in zip(e_s, eps)),
-                    key=lambda x: -x[0])
+    # relevance decides whether an episode is shown at all; importance only decides the order among the relevant ones
+    e_rank = sorted(((float(s), float(s) * importance(e["valence"], bool(e["mistake"]), e["created"]), e)
+                     for s, e in zip(e_s, eps) if float(s) > threshold), key=lambda x: -x[1])
     f_s = rank([db.from_blob(f["vec"]) for f in fs], [f["text"] for f in fs])
     f_rank = sorted(zip(f_s, fs), key=lambda x: -x[0])
     l_s = rank([None] * len(les), [l["trigger_text"] + " " + l["right_action"] for l in les])
     l_rank = sorted(zip(l_s, les), key=lambda x: -x[0])
     return {
         "working": working(10),
-        "episodic": [{"user": e["user_text"], "reply": e["reply"], "when": e["created"][:16]} for s, e in e_rank[:k] if s > threshold],
+        "episodic": [{"user": e["user_text"], "reply": e["reply"], "when": e["created"][:16]} for _, _, e in e_rank[:k]],
         "semantic": [f["text"] for s, f in f_rank[:k] if s > threshold],
         "lessons": [f"{l['trigger_text']} → {l['right_action']}" for s, l in l_rank[:k] if s > threshold],
         "habits": habits(3, path),

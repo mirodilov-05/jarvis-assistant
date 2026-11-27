@@ -71,6 +71,9 @@ def _real_speech(name):
 
 def test_voice_enrolment_on_real_speech_uses_a_temporary_file():
     import voiceprint as vp
+    if not vp._model():          # the speaker model is downloaded by the installer, not kept in git
+        print("SKIP  speaker model not installed yet: run install.ps1 to enable this check")
+        return
     real = vp.FILE
     before = real.read_bytes() if real.exists() else None
     vp.FILE = tmp("voiceprint_test.npz")

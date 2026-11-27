@@ -177,6 +177,80 @@ STATE_TEXT = {"listening": "жду «Джарвис»", "recording": "слуша
 STATE_COLOR = {"listening": "#4fd1ff", "recording": "#7fe3ff", "thinking": "#ffb547", "speaking": "#78aaff",
                "taping": "#ff5468", "starting": "#7890a0"}
 ACTIVE = ("recording", "thinking", "speaking")
+STYLES = ("wave", "orb", "pulse", "scanner", "dots")      # Волна (crisp, the default), Орб, Пульс, Сканер, Точки
+KEY = "#010203"                                           # the window colour that Windows makes see-through
+
+
+def _level(state: str) -> float:
+    """0..1: how loud Jarvis speaks (his own voice) or how loud you speak (the microphone)."""
+    m = _main()
+    if not m:
+        return 0.0
+    v = getattr(m, "OUT_LEVEL", {}).get("v", 0.0) if state == "speaking" else getattr(m, "LEVEL", {}).get("v", 0.0)
+    return max(0.0, min(1.0, float(v) / 1400.0))
+
+
+def draw_style(c, style: str, w: int, h: int, t: float, lv: float, state: str, color: str) -> None:
+    """One frame of the capsule's living sign. Integer coordinates and no blur: crisp at any size."""
+    import math
+    c.delete("all")
+    active = state in ACTIVE
+    mid = h // 2
+    if style == "orb":
+        r0 = 5 + int(3 * lv)
+        for k in range(3):                                   # rings flowing outwards
+            ph = (t * (1.4 if active else 0.5) + k / 3) % 1
+            r = r0 + ph * (h / 2 - r0)
+            shade = _mix(color, "#0b141d", ph)
+            c.create_oval(w // 2 - r, mid - r, w // 2 + r, mid + r, outline=shade, width=2 if k == 0 else 1)
+        c.create_oval(w // 2 - r0, mid - r0, w // 2 + r0, mid + r0, fill=color, outline="")
+    elif style == "pulse":
+        pts = []
+        speed = 70 if active else 22
+        for x in range(0, w + 1, 2):
+            u = ((x + t * speed) % 40) / 40
+            beat = math.exp(-((u - 0.5) ** 2) / 0.004) * (0.35 + 0.65 * lv if active else 0.25)
+            y = mid - int(beat * (h / 2 - 2) * (1 if u < 0.52 else -0.45))
+            pts += [x, y]
+        c.create_line(*pts, fill=color, width=2)
+    elif style == "scanner":
+        c.create_line(2, mid, w - 2, mid, fill=_mix(color, "#0b141d", 0.75), width=2)
+        pos = (math.sin(t * (3.2 if active else 1.2)) + 1) / 2
+        x = 4 + pos * (w - 8)
+        seg = 10 + int(lv * 14)
+        for k in range(4, 0, -1):                            # a bright head with a fading tail
+            c.create_line(max(2, x - seg * k / 2), mid, min(w - 2, x + seg * k / 2), mid, fill=_mix(color, "#0b141d", 1 - 1 / k), width=2 + (k == 1) * 2)
+    elif style == "dots":
+        n = 4
+        for i in range(n):
+            amp = (h / 2 - 5) * (0.25 + 0.75 * lv) if active else 2
+            y = mid - int(abs(math.sin(t * (6 if active else 2) + i * 0.7)) * amp)
+            x = int(w / 2 + (i - (n - 1) / 2) * 11)
+            c.create_oval(x - 3, y - 3, x + 3, y + 3, fill=color, outline="")
+    else:                                                    # «wave»: a crisp equaliser, the main style
+        bars, gap = 11, 2
+        bw = max(2, (w - (bars - 1) * gap) // bars)
+        x0 = (w - (bars * bw + (bars - 1) * gap)) // 2
+        for i in range(bars):
+            shape = math.sin(math.pi * (i + 0.5) / bars)                # tall in the middle
+            wob = 0.55 + 0.45 * math.sin(t * 13 + i * 1.9) * math.sin(t * 7.3 + i * 0.8)
+            k = (0.12 + 0.88 * lv * wob) * shape if active else 0.08 + 0.05 * math.sin(t * 2 + i)
+            bh = max(2, int(k * (h - 4)))
+            x = x0 + i * (bw + gap)
+            c.create_rectangle(x, mid - bh // 2, x + bw, mid + bh // 2 + 1, fill=color, outline="")
+
+
+def _mix(a: str, b: str, k: float) -> str:
+    """A colour between a and b (k = 0 → a, 1 → b)."""
+    k = max(0.0, min(1.0, k))
+    pa = [int(a[i:i + 2], 16) for i in (1, 3, 5)]
+    pb = [int(b[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * k):02x}" for x, y in zip(pa, pb))
+
+
+def round_rect(c, x1, y1, x2, y2, r, **kw):
+    pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+    return c.create_polygon(pts, smooth=True, **kw)
 
 
 def _ensure_capsule() -> None:
@@ -204,14 +278,19 @@ def _capsule_loop() -> None:
     root.title("Jarvis capsule")
     root.overrideredirect(True)
     root.attributes("-topmost", True)
-    root.attributes("-alpha", 0.93)
+    root.attributes("-alpha", 0.96)
     bg, fg, muted = "#0b141d", "#d6ecff", "#7b93a8"
-    root.configure(bg=bg)
-    W = 460
-    frame = tk.Frame(root, bg=bg, highlightthickness=1, highlightbackground="#1f3445")
+    root.configure(bg=KEY)
+    try:
+        root.attributes("-transparentcolor", KEY)        # rounded corners: the key colour is see-through
+    except tk.TclError:
+        pass
+    W = 470
+    frame = tk.Canvas(root, bg=KEY, highlightthickness=0)
     frame.pack(fill="both", expand=True)
-    dot = tk.Canvas(frame, width=14, height=14, bg=bg, highlightthickness=0)
-    oval = dot.create_oval(2, 2, 12, 12, fill=STATE_COLOR["listening"], outline="")
+    VW, VH = 62, 26
+    dot = tk.Canvas(frame, width=VW, height=VH, bg=bg, highlightthickness=0)
+    anim = {"t0": time.time(), "state": "listening", "style": "wave", "lv": 0.0}
     state = tk.Label(frame, text="ДЖАРВИС · жду «Джарвис»", bg=bg, fg=muted, font=("Segoe UI", 9))
     close = tk.Label(frame, text="✕", bg=bg, fg=muted, font=("Segoe UI", 10), cursor="hand2")
     reply = tk.Label(frame, text="", bg=bg, fg=fg, font=("Segoe UI", 10), anchor="w", justify="left")
@@ -233,21 +312,23 @@ def _capsule_loop() -> None:
         for wdg in (dot, state, close, reply, entry):
             wdg.place_forget()
         if mode == "island":
-            w, h = 520, 40
-            dot.place(x=12, y=13)
-            state.place(x=32, y=10)
+            w, h = 560, 44
+            dot.place(x=16, y=(h - VH) // 2)
+            state.place(x=16 + VW + 10, y=12)
             reply.config(wraplength=0)
-            reply.place(x=150, y=10, width=w - 162)
+            reply.place(x=16 + VW + 132, y=12, width=w - VW - 164)
             set_noactivate(True)
         else:
-            w, h = W, 70
-            dot.place(x=12, y=12)
-            state.place(x=32, y=8)
-            close.place(x=w - 26, y=6)
-            reply.config(wraplength=w - 210)
-            reply.place(x=12, y=32, width=w - 200)
-            entry.place(x=w - 186, y=34, width=170, height=24)
+            w, h = W, 74
+            dot.place(x=16, y=10)
+            state.place(x=16 + VW + 10, y=12)
+            close.place(x=w - 30, y=10)
+            reply.config(wraplength=w - 220)
+            reply.place(x=16, y=42, width=w - 214)
+            entry.place(x=w - 192, y=42, width=168, height=24)
             set_noactivate(False)
+        frame.delete("body")
+        round_rect(frame, 1, 1, w - 2, h + extra - 2, min(22, (h + extra) // 2), fill=bg, outline="#1f3445", width=1, tags="body")
         x = (root.winfo_screenwidth() - w) // 2
         root.geometry(f"{w}x{h + extra}+{x}+14")
 
@@ -308,7 +389,7 @@ def _capsule_loop() -> None:
                     s = ev.get("state") or ev.get("s") or ""
                     if s and s != last["s"]:
                         last["s"] = s
-                        dot.itemconfig(oval, fill=STATE_COLOR.get(s, "#4fd1ff"))
+                        anim["state"] = s
                         state.config(text="ДЖАРВИС · " + STATE_TEXT.get(s, s))
                         if s in ACTIVE:
                             _cap["hide_at"] = 0.0
@@ -329,7 +410,7 @@ def _capsule_loop() -> None:
                     lines = sum(1 + len(x) // 60 for x in text.splitlines()) or 1
                     extra = min(350, 20 * lines + 8)
                     layout("manual", extra)
-                    trans.place(x=12, y=64, width=W - 24, height=extra)
+                    trans.place(x=16, y=72, width=W - 32, height=extra)
                     set_noactivate(True)          # a translation never takes the keyboard away from your game
                     root.deiconify()
                     root.attributes("-topmost", True)
@@ -346,7 +427,19 @@ def _capsule_loop() -> None:
             hide()
         root.after(120, pump)
 
+    def animate():
+        """The living sign: ~30 frames a second while Jarvis is busy, ~8 when he waits."""
+        st = anim["state"]
+        if _cap["visible"]:
+            style = core.setting("ui", "capsule_style", "wave")
+            target = _level(st) if st in ("speaking", "recording") else (0.35 if st == "thinking" else 0.0)
+            anim["lv"] += (target - anim["lv"]) * 0.45                 # quick but not jittery
+            draw_style(dot, style if style in STYLES else "wave", VW, VH, time.time() - anim["t0"], anim["lv"], st,
+                       STATE_COLOR.get(st, "#4fd1ff"))
+        root.after(33 if st in ACTIVE else 120, animate)
+
     pump()
+    animate()
     root.mainloop()
 
 

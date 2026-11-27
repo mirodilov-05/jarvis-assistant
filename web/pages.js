@@ -246,14 +246,14 @@
   };
 
   /* ---------- Settings ---------- */
-  const SECTIONS = [["voice", "Голос", "mic"], ["messengers", "Мессенджеры и почта", "msg"], ["calendar", "Календарь", "cal"], ["weather", "Погода", "weather"], ["ai", "Ключи и облако", "brain"], ["computer", "Компьютер", "shield"], ["character", "Характер", "paint"], ["data", "Данные", "doc"]];
+  const SECTIONS = [["voice", "Голос", "mic"], ["capsule", "Мини-капсула", "show"], ["messengers", "Мессенджеры и почта", "msg"], ["calendar", "Календарь", "cal"], ["weather", "Погода", "weather"], ["ai", "Ключи и облако", "brain"], ["computer", "Компьютер", "shield"], ["character", "Характер", "paint"], ["data", "Данные", "doc"]];
   const SETTINGS = {
     title: "Настройки", sub: "Всё, что меняет поведение Джарвиса. Каждый раздел объясняет, что делает настройка и как её включить.",
     render(el, sub) {
       const cur = SECTIONS.some((s) => s[0] === sub) ? sub : "voice";
       el.innerHTML = `<div class="settings"><nav class="subnav" aria-label="Разделы настроек">${SECTIONS.map(([id, t, ic]) => `<a href="#/settings/${id}" aria-current="${id === cur}">${svg(ic)}${esc(t)}</a>`).join("")}</nav><div id="setBody"></div></div>`;
       const body = $("#setBody");
-      const fn = { voice: SEC.voice, messengers: SEC.messengers, calendar: SEC.calendar, weather: SEC.weather, ai: SEC.ai, computer: SEC.computer, character: SEC.character, data: SEC.data }[cur];
+      const fn = { voice: SEC.voice, capsule: SEC.capsule, messengers: SEC.messengers, calendar: SEC.calendar, weather: SEC.weather, ai: SEC.ai, computer: SEC.computer, character: SEC.character, data: SEC.data }[cur];
       try { fn(body); } catch (e) { body.innerHTML = callout("bad", "Раздел не открылся", esc(e.message)); }
     },
   };
@@ -262,6 +262,33 @@
   const REMOTE = () => STATE.remote || {};
 
   const SEC = {};
+  /* The mini capsule: a slim bar on top of every window (games too). Five looks of its living sign. */
+  const CAPSULES = [
+    ["wave", "Волна", "Чёткий эквалайзер: столбики в такт голосу Джарвиса. Основной стиль."],
+    ["orb", "Орб", "Светящийся шар, от него расходятся кольца."],
+    ["pulse", "Пульс", "Бегущая линия, как кардиограмма."],
+    ["scanner", "Сканер", "Световой бегунок, быстрее, когда Джарвис занят."],
+    ["dots", "Точки", "Четыре точки прыгают, когда он говорит или думает."],
+  ];
+  function capPreview(k) {
+    const n = { wave: 11, orb: 3, pulse: 1, scanner: 1, dots: 4 }[k];
+    return `<div class="cap-demo cap-${k}" aria-hidden="true"><span class="cap-sign">${Array.from({ length: n }, (_, i) => `<i style="--i:${i}"></i>`).join("")}</span><span class="cap-txt"><b>ДЖАРВИС</b> · говорю</span></div>`;
+  }
+  SEC.capsule = (el) => {
+    const ui = V3().ui || {}, cur = ui.capsule_style || "wave";
+    el.innerHTML = section("capsule", "Мини-капсула", "Тонкая полоска поверх всех окон и игр: что делает Джарвис и его последний ответ. Открыть: Ctrl+Alt+Space или «покажи капсулу».",
+      panel("Вид", "Знак слева двигается в такт голосу: когда говорит Джарвис — по его голосу, когда говорите вы — по микрофону.",
+        `<div class="cap-grid">${CAPSULES.map(([k, n, d]) => `<button type="button" class="cap-card" data-cap="${k}" aria-pressed="${cur === k}">${capPreview(k)}<b>${n}</b><span>${d}</span></button>`).join("")}</div>`) +
+      panel("Поведение", "", row("Появляется сама", "Когда вы говорите с Джарвисом, а его окно закрыто или вы в игре", sw("ui", "capsule_auto", ui.capsule_auto !== false, "Капсула появляется сама")) +
+        `<div class="foot" style="display:flex;gap:8px"><button class="btn primary" id="capShow">Показать капсулу</button></div>`));
+    el.querySelectorAll("[data-cap]").forEach((b) => b.addEventListener("click", async () => {
+      await api("/api/settings", "POST", { section: "ui", key: "capsule_style", value: b.dataset.cap }).catch((e) => toast(e.message));
+      if (STATE.v3) { STATE.v3.ui = { ...(STATE.v3.ui || {}), capsule_style: b.dataset.cap }; }
+      el.querySelectorAll("[data-cap]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      toast("Вид капсулы: " + b.querySelector("b").textContent);
+    }));
+    $("#capShow").onclick = () => api("/api/capsule", "POST").then(() => toast("Капсула открыта сверху экрана")).catch((e) => toast(e.message));
+  };
   SEC.voice = (el) => {
     const v = V3().voice || {}, f = V3().features || {};
     el.innerHTML = section("voice", "Голос", "Как Джарвис говорит, слушает и узнаёт вас. Голос, которым вы говорите, записывается один раз.",

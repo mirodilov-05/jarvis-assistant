@@ -234,7 +234,8 @@ def script_skill(ctx: Ctx) -> str:
 def last_text() -> tuple[str, str]:
     if LAST["text"]:
         return LAST["title"], LAST["text"]
-    import pcx  # noqa: F401  (fallback: the last answer Jarvis gave)
+    import importlib.util as _iu  # fallback: the last answer Jarvis gave
+    _iu.find_spec("pcx")
     main = sys.modules.get("__main__")
     hist = list(getattr(main, "HISTORY", []))
     last = next((m["text"] for m in reversed(hist) if m.get("role") == "jarvis"), "")

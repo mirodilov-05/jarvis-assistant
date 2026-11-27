@@ -2,6 +2,7 @@
 
 import requests
 
+import core
 from core import Ctx, skill
 
 _CODES_RU = {0: "ясно", 1: "в основном ясно", 2: "переменная облачность", 3: "пасмурно", 45: "туман", 48: "туман",
@@ -15,10 +16,23 @@ _CODES_UZ = {0: "ochiq", 1: "asosan ochiq", 2: "qisman bulutli", 3: "bulutli", 4
 
 
 def _geocode(city: str, lang: str = "ru"):
+    """A city does not move: its coordinates are kept for a day."""
+    return core.memo(f"geo:{city}:{lang}", 86400, lambda: _geocode_now(city, lang))
+
+
+def _geocode_now(city: str, lang: str):
     r = requests.get("https://geocoding-api.open-meteo.com/v1/search",
                      params={"name": city, "count": 1, "language": "ru" if lang == "ru" else "en"}, timeout=10)
     res = (r.json().get("results") or [None])[0]
     return (res["latitude"], res["longitude"], res["name"]) if res else None
+
+
+def _forecast(lat: float, lon: float) -> dict:
+    """The forecast is refreshed every ten minutes at most."""
+    return core.memo(f"fc:{lat:.3f}:{lon:.3f}", 600, lambda: requests.get("https://api.open-meteo.com/v1/forecast", params={
+        "latitude": lat, "longitude": lon, "current": "temperature_2m,weather_code,wind_speed_10m",
+        "daily": "temperature_2m_max,temperature_2m_min,weather_code", "timezone": "auto", "forecast_days": 2,
+    }, timeout=10).json())
 
 
 def short_weather(city: str, lang: str) -> str:
@@ -56,10 +70,7 @@ def weather(ctx: Ctx) -> str:
     if not place:
         return ctx.t(f"Не нашёл город {city}.", f"{city} shahri topilmadi.")
     lat, lon, name = place
-    r = requests.get("https://api.open-meteo.com/v1/forecast", params={
-        "latitude": lat, "longitude": lon, "current": "temperature_2m,weather_code,wind_speed_10m",
-        "daily": "temperature_2m_max,temperature_2m_min,weather_code", "timezone": "auto", "forecast_days": 2,
-    }, timeout=10).json()
+    r = _forecast(lat, lon)
     cur, daily = r["current"], r["daily"]
     t, code = round(cur["temperature_2m"]), cur["weather_code"]
     tmax, tmin, tcode = round(daily["temperature_2m_max"][1]), round(daily["temperature_2m_min"][1]), daily["weather_code"][1]

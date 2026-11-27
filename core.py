@@ -599,8 +599,69 @@ def save_setting(section: str, key: str, value) -> None:
     emit({"type": "settings"})
 
 
+_MEMO: dict = {}
+
+
+def memo(key: str, ttl: float, fn):
+    """Remembers fn() for ttl seconds: slow network answers (weather, rates) are not fetched again every time."""
+    import time as _time
+    hit = _MEMO.get(key)
+    if hit and _time.time() - hit[0] < ttl:
+        return hit[1]
+    value = fn()
+    _MEMO[key] = (_time.time(), value)
+    return value
+
+
 def setting(section: str, key: str, default=None):
     return CONFIG.get(section, {}).get(key, default)
+
+
+LAST_ACTION: dict = {"skill": "", "tools": ""}      # what the last request did, filled by route() and agent.py
+HISTORY_FILE = DATA / "history.jsonl"
+
+# Results of the last search (YouTube videos, …): «запусти первое видео» refers to them.
+RESULTS: dict = {"kind": "", "items": [], "at": 0.0}
+
+
+def set_results(kind: str, items: list) -> None:
+    import time as _time
+    RESULTS.update(kind=kind, items=list(items), at=_time.time())
+
+
+def get_results(kind: str = "", ttl: float = 1800.0) -> list:
+    """Results of the last search, if it is recent (30 min) and of the asked kind."""
+    import time as _time
+    if not RESULTS["items"] or _time.time() - RESULTS["at"] > ttl:
+        return []
+    if kind and RESULTS["kind"] != kind:
+        return []
+    return RESULTS["items"]
+
+
+def add_history(source: str, user: str, reply: str, lang: str, engine: str) -> None:
+    """One line per request: time, source, what was said, what was answered, and what was done."""
+    import json
+    rec = {"time": now().strftime("%Y-%m-%d %H:%M:%S"), "source": source, "lang": lang, "user": user,
+           "reply": reply, "skill": LAST_ACTION.get("skill", ""), "tools": LAST_ACTION.get("tools", ""),
+           "engine": engine}
+    with file_lock:
+        with HISTORY_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def read_history(limit: int = 200) -> list[dict]:
+    import json
+    if not HISTORY_FILE.exists():
+        return []
+    lines = HISTORY_FILE.read_text(encoding="utf-8").splitlines()[-limit:]
+    out = []
+    for line in lines:
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
 
 
 def log_exchange(source: str, lang: str, user: str, reply: str) -> None:
@@ -674,7 +735,8 @@ def _handle_pending(text: str, lang: str) -> Optional[str]:
 _rerouting: dict = {}
 # skills whose last part is free text by design ("добавь дело <что угодно>") keep the instant path for long phrases
 _LONG_OK = {"vision.look", "tasks.add", "notes.add", "notes.search", "notes.recall", "reminders.in", "reminders.at", "messaging.send", "apps.search",
-            "apps.youtube", "apps.music", "apps.browser", "modes.name", "recorder.start", "briefing.report", "llm.chat"}
+            "apps.youtube", "apps.music", "apps.browser", "modes.name", "recorder.start", "briefing.report", "llm.chat", "pc.about", "pc.analyze", "pc.optimize", "pc.optimize_undo", "pc.scan", "pc.index", "desktop.find_file", "activity.on", "activity.off", "activity.summary", "activity.forget",
+            "docs.search", "docs.summary", "memory.fact_add", "memory.recall", "shield.block", "show.lang", "docs.index"}
 # never run these from an AI guess — they change or delete things / talk to other people
 _NO_SMART = {"system.shutdown", "tasks.clear", "tasks.delete", "notes.delete", "notes.clear", "messaging.send",
              "apps.close", "reminders.cancel", "basics.reload", "recorder.start"}
@@ -748,7 +810,15 @@ def route(text: str, lang: str, source: str, config: dict) -> str:
     if len(parts) > 1 and not _rerouting.get("chain"):
         _rerouting["chain"] = True
         try:
-            replies = [route(p, lang, source, config) for p in parts[:5]]
+            replies = []
+            tv_ctx = False
+            for p in parts[:5]:
+                if tv_ctx and not re.search(r"(?<!\w)(?:телев[ие]?з\w*|телеиз\w*|телик\w*|телек\w*|тв)(?!\w)", p) \
+                        and re.search(r"музык|песн|трек|клип|видео|ролик|ютуб|youtube", p):
+                    p = p + " на телевизоре"          # «…и поставь музыку» after «…в телевизоре» means the TV
+                replies.append(route(p, lang, source, config))
+                if re.search(r"(?<!\w)(?:телев[ие]?з\w*|телеиз\w*|телик\w*|телек\w*|тв)(?!\w)", p):
+                    tv_ctx = True
         finally:
             _rerouting["chain"] = False
         return " ".join(r for r in replies if r)
@@ -772,6 +842,7 @@ def route(text: str, lang: str, source: str, config: dict) -> str:
                     log.exception("Skill %s failed", sk.name)
                     return ctx.t(f"Ошибка в навыке {sk.name}: {e}", f"{sk.name} ko'nikmasida xato: {e}")
                 if reply is not None:  # "" = handled silently (e.g. the recorder announces itself)
+                    LAST_ACTION.update(skill=sk.name, tools="")
                     log.info("Skill %s handled: %s", sk.name, text)
                     return reply
     # Voice: a one-word fragment that no skill understood is almost always mishearing — ask again

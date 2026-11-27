@@ -130,6 +130,13 @@ def find_files(query: str, limit: int = 8, seconds: float = 4.0) -> list[Path]:
     words = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 1]
     if not words:
         return []
+    try:   # the file-name index (built with the owner's consent) answers at once when it knows the file
+        import pc_index
+        indexed = [Path(p) for p in pc_index.search(query, limit) if Path(p).exists()]
+        if indexed:
+            return indexed
+    except Exception:  # noqa: BLE001
+        pass
     finder = sys.modules.get("jarvis_plugin_appfinder")
     keys = [finder.key(w) for w in words] if finder else []
     hits, t0 = [], time.time()
@@ -175,7 +182,7 @@ def find_file(ctx: Ctx) -> str:
 
 
 @skill("desktop.last_download", title={"ru": "Открыть последний скачанный файл"},
-       patterns={"ru": [r"(?:открой|покажи) (?:последн\w+ )?(?:скачанн\w+ файл|загрузк\w*|скачанное)$",
+       patterns={"ru": [r"(?:открой|покажи) (?:последн\w+ )?(?:скачанн\w+ файл|скачанное)$",
                         r"(?:открой|покажи) последн\w+ (?:скачанн\w+|загруженн\w+)(?: файл)?$"]},
        examples={"ru": ["Открой последний скачанный файл"]}, priority=9)
 def last_download(ctx: Ctx):

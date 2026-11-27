@@ -4,6 +4,7 @@ Links are stored in Windows Credential Manager (Connections → Calendar).
 """
 
 import datetime as dt
+import time
 import json
 
 import requests
@@ -29,25 +30,51 @@ def set_urls(urls: list[str]) -> None:
     connections.save(data)
 
 
-def events(day: dt.date, days: int = 1) -> list[dict]:
+_CACHE: dict = {}        # (url, day, days) -> (time, events); one download per ten minutes
+_BROKEN: set = set()     # calendars that failed to parse: said once, not on every request
+
+
+def _fetch(url: str, start: dt.datetime, end: dt.datetime) -> list[dict]:
     import icalendar
     import recurring_ical_events
 
+    raw = requests.get(url.replace("webcal://", "https://"), timeout=15).content
+    try:
+        cal = icalendar.Calendar.from_ical(raw)
+    except ValueError:
+        # one malformed line makes the whole file fail: drop the lines that cannot be read and try again
+        lines = [ln for ln in raw.decode("utf-8", "replace").splitlines() if ":" in ln or ln[:1] in (" ", "\t")]
+        cal = icalendar.Calendar.from_ical("\n".join(lines))
     out = []
+    for ev in recurring_ical_events.of(cal).between(start, end):
+        s = ev.get("DTSTART").dt
+        all_day = not isinstance(s, dt.datetime)
+        if isinstance(s, dt.datetime) and s.tzinfo:
+            s = s.astimezone().replace(tzinfo=None)
+        out.append({"title": str(ev.get("SUMMARY", "")), "start": s, "all_day": all_day,
+                    "location": str(ev.get("LOCATION", "") or "")})
+    return out
+
+
+def events(day: dt.date, days: int = 1) -> list[dict]:
     start = dt.datetime.combine(day, dt.time.min)
     end = start + dt.timedelta(days=days)
+    out = []
     for url in ics_urls():
+        key = (url, day, days)
+        hit = _CACHE.get(key)
+        if hit and time.time() - hit[0] < 600:
+            out.extend(hit[1])
+            continue
         try:
-            cal = icalendar.Calendar.from_ical(requests.get(url.replace("webcal://", "https://"), timeout=15).content)
-            for ev in recurring_ical_events.of(cal).between(start, end):
-                s = ev.get("DTSTART").dt
-                all_day = not isinstance(s, dt.datetime)
-                if isinstance(s, dt.datetime) and s.tzinfo:
-                    s = s.astimezone().replace(tzinfo=None)
-                out.append({"title": str(ev.get("SUMMARY", "")), "start": s, "all_day": all_day,
-                            "location": str(ev.get("LOCATION", "") or "")})
-        except Exception:  # noqa: BLE001
-            core.log.exception("Calendar fetch failed")
+            got = _fetch(url, start, end)
+            _CACHE[key] = (time.time(), got)
+            out.extend(got)
+            _BROKEN.discard(url)
+        except Exception as e:  # noqa: BLE001 — one calendar must not break the others
+            if url not in _BROKEN:
+                _BROKEN.add(url)
+                core.log.warning("Calendar could not be read (%s): %s", type(e).__name__, str(e)[:120])
     return sorted(out, key=lambda e: (not e["all_day"], str(e["start"])))
 
 

@@ -5,7 +5,6 @@ Settings: [assistant] greet_on_start, greeting_lang, honorific_ru, honorific_uz.
 """
 
 import random
-import time
 
 import core
 from core import Ctx, skill

@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JARVIS PRIME OS</title>
+<style>
+:root{--bg:#05060b;--panel:rgba(14,18,32,.72);--line:rgba(140,160,255,.16);--text:#e8ecff;--muted:#7d88b0;--cyan:#5fd8ff;--violet:#a98bff;--ok:#42e3a5;--warn:#ffb14a;--bad:#ff5d7a}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 "Segoe UI",system-ui,sans-serif;overflow:hidden}
+body::before{content:"";position:fixed;inset:0;background:radial-gradient(60% 50% at 50% 45%,rgba(120,90,255,.14),transparent 70%),radial-gradient(40% 40% at 15% 90%,rgba(60,200,255,.08),transparent 70%);pointer-events:none}
+.top{position:fixed;top:0;left:0;right:0;height:64px;display:flex;align-items:center;justify-content:center;z-index:4}
+.title{font:600 22px "Segoe UI",sans-serif;letter-spacing:.02em;background:linear-gradient(90deg,var(--cyan),var(--violet));-webkit-background-clip:text;background-clip:text;color:transparent}
+.title small{font-size:12px;opacity:.7;margin-left:8px}
+.menu{position:fixed;top:14px;right:18px;width:40px;height:40px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:var(--text);display:grid;place-items:center;cursor:pointer;z-index:5}
+.stage{position:fixed;inset:64px 0 0 0;display:grid;grid-template-columns:minmax(260px,1fr) minmax(320px,1.2fr) minmax(260px,1fr);gap:18px;padding:12px 22px 150px}
+.col{display:flex;flex-direction:column;gap:14px;min-height:0;overflow:auto;scrollbar-width:none}
+.col::-webkit-scrollbar{display:none}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:16px 18px;backdrop-filter:blur(14px)}
+.panel h3{margin:0 0 2px;font-size:16px;font-weight:600}
+.panel .sub{color:var(--muted);font-size:12px;margin-bottom:12px}
+.chip{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--muted);margin:2px 4px 2px 0}
+.chip.on{color:var(--cyan);border-color:rgba(95,216,255,.5)}
+.row{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row .t{overflow-wrap:anywhere}
+.bar{height:5px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden;margin-top:6px}
+.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--violet));border-radius:99px}
+.muted{color:var(--muted)}
+.core{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:0}
+#orb{width:min(42vh,420px);height:min(42vh,420px);display:block}
+.state{margin-top:8px;font:600 12px "Consolas",monospace;letter-spacing:.2em;color:var(--cyan);text-transform:uppercase}
+.speech{max-width:520px;text-align:center;margin-top:10px;font-size:15px;min-height:44px}
+.chat{width:min(560px,100%);max-height:220px;overflow-y:auto;margin-top:12px;padding:10px 12px;font-size:14px;text-align:left;scrollbar-width:thin}
+.bub{margin:6px 0;padding:8px 12px;border-radius:12px;max-width:88%;overflow-wrap:anywhere}
+.bub.you{margin-left:auto;background:rgba(95,216,255,.12);border:1px solid rgba(95,216,255,.25)}
+.bub.jv{background:rgba(169,139,255,.1);border:1px solid rgba(169,139,255,.22)}
+.bub small{display:block;color:var(--muted);font-size:11px;margin-bottom:2px}
+.speech .ja{font-size:17px;margin-bottom:4px}
+.badge{position:absolute;top:0;right:0}
+.dock{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);width:min(760px,94vw);z-index:4;background:var(--panel);border:1px solid var(--line);border-radius:22px;padding:12px 14px;backdrop-filter:blur(16px)}
+.dock form{display:flex;gap:8px;align-items:center}
+.dock input{flex:1;height:42px;border-radius:12px;border:1px solid var(--line);background:rgba(10,14,26,.8);color:var(--text);padding:0 14px;font:inherit}
+.dock input:focus{outline:none;border-color:rgba(95,216,255,.6)}
+.dock button{height:42px;padding:0 16px;border-radius:12px;border:0;background:linear-gradient(90deg,var(--cyan),var(--violet));color:#06101f;font-weight:600;cursor:pointer}
+.dock .chips{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+.dock .chips button{padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--muted);font:12px "Consolas",monospace;cursor:pointer}
+.dock .chips button:hover{color:var(--text)}
+.reply{margin-top:8px;color:var(--text);min-height:20px;font-size:14px}
+.stagebtn{position:fixed;left:18px;bottom:22px;padding:12px 18px;border-radius:14px;border:1px solid rgba(95,216,255,.4);background:var(--panel);color:var(--cyan);font-weight:600;cursor:pointer;z-index:4}
+.soon{opacity:.55}
+@media (max-width:900px){
+  html,body{overflow:auto}
+  .stage{position:static;grid-template-columns:1fr;padding:80px 14px 170px}
+  .col{overflow:visible}
+  .core{order:-1;padding:10px 0}
+  #orb{width:70vw;height:70vw}
+  .stagebtn{display:none}
+}
+</style>
+</head>
+<body>
+
+<header class="top"><div class="title">JARVIS PRIME OS <small>v3.0</small></div></header>
+<button class="menu" id="menu" aria-label="Меню" title="Обновить">☰</button>
+
+<main class="stage">
+  <!-- LEFT: life flow -->
+  <section class="col">
+    <div class="panel">
+      <h3>Life Flow</h3>
+      <div class="sub">Стратегия и цели</div>
+      <div>
+        <span class="chip" id="yearChip">Год</span>
+        <span class="chip" id="monthChip">Месяц</span>
+        <span class="chip" id="weekChip">Неделя</span>
+        <span class="chip on">Сегодня</span>
+      </div>
+      <div style="margin-top:12px" id="focus"><div class="muted">загрузка…</div></div>
+    </div>
+    <div class="panel">
+      <h3>Цели</h3>
+      <div class="sub">каскад день → неделя → месяц → год</div>
+      <div id="goals"><div class="muted">загрузка…</div></div>
+    </div>
+  </section>
+
+  <!-- CENTRE: the core -->
+  <section class="core">
+    <canvas id="orb" aria-label="Ядро JARVIS"></canvas>
+    <div class="state" id="state">готов</div>
+    <div class="speech" id="speech">
+      <div class="ja">みなさん、こんにちは。私はジャービスです。</div>
+      <div class="muted">Команды вводите внизу. Ядро реагирует на состояние системы.</div>
+    </div>
+    <div class="panel chat" id="chat" aria-label="Чат и история"><div class="muted">история пуста</div></div>
+  </section>
+
+  <!-- RIGHT: system -->
+  <section class="col">
+    <div class="panel">
+      <h3>Система</h3>
+      <div class="sub">батарея, мозг, бюджет</div>
+      <div class="row"><span>Батарея</span><span id="bat">—</span></div>
+      <div class="row"><span>Экономия</span><span id="saver">—</span></div>
+      <div class="row"><span>Мозг</span><span id="engine">—</span></div>
+      <div class="row"><span>Бюджет на сегодня</span><span id="budget">—</span></div>
+      <div class="row"><span>Ждут подтверждения</span><span id="pending">—</span></div>
+    </div>
+    <div class="panel">
+      <h3>Дела</h3>
+      <div class="sub">открытые, главное первым</div>
+      <div id="tasks"><div class="muted">загрузка…</div></div>
+    </div>
+    <div class="panel soon">
+      <h3>Second Brain &amp; Study</h3>
+      <div class="sub">RAG по заметкам и карточки SM-2 — ожидает настройки</div>
+      <div class="muted">Появится после подключения памяти и карточек.</div>
+    </div>
+    <div class="panel soon">
+      <h3>Device Orbit &amp; IoT</h3>
+      <div class="sub">телевизор, наушники, умный дом — ожидает данных</div>
+      <div class="row"><span>Телевизор Samsung</span><span class="muted">MAC записан</span></div>
+      <div class="row"><span>Наушники</span><span class="muted">имя записано</span></div>
+      <div class="row"><span>Умный дом</span><span class="muted">нужен Home Assistant</span></div>
+    </div>
+  </section>
+</main>
+
+<button class="stagebtn" id="stageBtn" title="Режим презентации — требует Claude API">STAGE PRESENTATION</button>
+
+<div class="dock">
+  <form id="cmd">
+    <input id="text" autocomplete="off" placeholder="Запрос к Джарвису или команда: «добавь дело …», «цель …», «заметка …», «главное»">
+    <button type="submit">Отправить</button>
+  </form>
+  <div class="chips">
+    <button data-q="главное">/главное</button>
+    <button data-q="прогресс">/прогресс</button>
+    <button data-q="мои цели">/цели</button>
+    <button data-q="статус">/статус</button>
+  </div>
+  <div class="reply" id="reply"></div>
+</div>
+
+<script>
+/* ---------- orb ---------- */
+const cv = document.getElementById('orb'), g = cv.getContext('2d');
+let t0 = performance.now(), level = 0.25;
+function size() { const d = devicePixelRatio || 1, r = cv.getBoundingClientRect(); cv.width = r.width * d; cv.height = r.height * d; }
+addEventListener('resize', size); size();
+function frame(now) {
+  requestAnimationFrame(frame);
+  const W = cv.width, H = cv.height, cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.36, s = (now - t0) / 1000;
+  g.clearRect(0, 0, W, H);
+  for (let k = 0; k < 4; k++) {                       // orbit rings
+    g.beginPath(); g.strokeStyle = `rgba(${k % 2 ? '169,139,255' : '95,216,255'},${0.12 + k * 0.03})`;
+    g.lineWidth = 1 * (devicePixelRatio || 1);
+    g.ellipse(cx, cy, R * (1.1 + k * 0.18), R * (0.42 + k * 0.1), s * (0.08 + k * 0.03) + k, 0, Math.PI * 2); g.stroke();
+  }
+  for (let i = 0; i < 260; i++) {                     // particles on a sphere that moves
+    const a = i * 2.399 + s * 0.25, b = Math.acos(1 - 2 * ((i * 0.618) % 1));
+    const x = Math.sin(b) * Math.cos(a), y = Math.sin(b) * Math.sin(a), z = Math.cos(b);
+    const r = R * (1 + 0.03 * Math.sin(s * 2 + i) * level), px = cx + x * r, py = cy + y * r * 0.92 + z * 0;
+    const alpha = 0.25 + 0.6 * (z + 1) / 2;
+    g.fillStyle = i % 3 ? `rgba(95,216,255,${alpha * 0.8})` : `rgba(169,139,255,${alpha})`;
+    g.beginPath(); g.arc(px, py, (i % 7 ? 1.1 : 1.8) * (devicePixelRatio || 1), 0, Math.PI * 2); g.fill();
+  }
+  const core = g.createRadialGradient(cx, cy, 0, cx, cy, R * 0.6);      // inner glow
+  core.addColorStop(0, `rgba(180,160,255,${0.35 + 0.2 * level})`); core.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = core; g.beginPath(); g.arc(cx, cy, R * 0.6, 0, Math.PI * 2); g.fill();
+  const wave = 8 + Math.round(level * 6);
+  g.strokeStyle = 'rgba(95,216,255,.7)'; g.lineWidth = 1.4 * (devicePixelRatio || 1); g.beginPath();
+  for (let x = 0; x <= 120; x++) {
+    const px = cx - R * 0.5 + (R * x / 60), py = cy + Math.sin(x * 0.25 + s * 3) * wave * (1 - Math.abs(x - 60) / 60);
+    x ? g.lineTo(px, py) : g.moveTo(px, py);
+  }
+  g.stroke();
+}
+requestAnimationFrame(frame);
+
+/* ---------- live data ---------- */
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function refresh() {
+  try {
+    const s = await (await fetch('/api/status')).json();
+    const b = s.battery && s.battery.percent !== undefined;
+    document.getElementById('bat').textContent = b ? `${s.battery.percent}% · ${s.battery.plugged ? 'от сети' : 'от батареи'}` : 'стационарный ПК';
+    document.getElementById('saver').textContent = s.saver ? 'включена' : 'выключена';
+    document.getElementById('engine').textContent = s.engine === 'claude' ? 'Claude' : s.engine === 'local' ? 'локальный (Ollama)' : 'офлайн';
+    document.getElementById('budget').textContent = '$' + s.budget_left_usd;
+    document.getElementById('pending').textContent = s.pending_confirmations.length ? s.pending_confirmations.join(', ') : 'нет';
+    const focus = s.tasks.slice(0, 3);
+    document.getElementById('focus').innerHTML = focus.length
+      ? focus.map(t => `<div class="row"><span class="t">${esc(t.text)}</span><span class="muted">фокус</span></div>`).join('')
+      : '<div class="muted">Фокусов нет. Три главных дела появятся здесь.</div>';
+    document.getElementById('tasks').innerHTML = s.tasks.map(t => `<div class="row"><span class="t">${esc(t.text)}</span></div>`).join('')
+      || '<div class="muted">дел нет</div>';
+    document.getElementById('goals').innerHTML = s.goals.map(x => `<div class="row" style="flex-direction:column;gap:0"><div class="t">${esc(x.title)} · ${Math.round(x.progress*100)}%</div><div class="bar"><i style="width:${Math.round(x.progress*100)}%"></i></div></div>`).join('')
+      || '<div class="muted">целей нет</div>';
+    level = s.pending_confirmations.length ? 0.6 : 0.25;
+    document.getElementById('state').textContent = s.saver ? 'экономия батареи' : (s.pending_confirmations.length ? 'жду подтверждения' : 'готов');
+  } catch (e) {
+    document.getElementById('state').textContent = 'нет связи с prime';
+  }
+}
+document.getElementById('menu').onclick = refresh;
+refresh(); loadChat(); setInterval(refresh, 10000); setInterval(loadChat, 5000);
+
+/* ---------- chat and history: what you said and what Jarvis answered, no questions back ---------- */
+async function loadChat() {
+  try {
+    const h = await (await fetch('/api/history')).json();
+    const box = document.getElementById('chat');
+    const turns = h.turns || [];
+    if (!turns.length) { box.innerHTML = '<div class="muted">история пуста — скажите или напишите команду</div>'; return; }
+    box.innerHTML = turns.map(t => {
+      const who = t.role === 'user' ? 'вы' : 'Джарвис';
+      const cls = t.role === 'user' ? 'you' : 'jv';
+      return `<div class="bub ${cls}"><small>${who} · ${esc((t.created || '').slice(11, 16))}</small>${esc(t.text)}</div>`;
+    }).join('');
+    box.scrollTop = box.scrollHeight;
+  } catch (e) { /* prime off: keep the last view */ }
+}
+
+/* ---------- command bar ---------- */
+async function send(text) {
+  const reply = document.getElementById('reply');
+  reply.textContent = '…';
+  try {
+    const r = await (await fetch('/api/command', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text})})).json();
+    reply.textContent = r.reply || r.error || '';
+    document.getElementById('speech').innerHTML = `<div class="ja">${esc(r.reply || '')}</div><div class="muted">${esc(text)}</div>`;
+  } catch (e) {
+    reply.textContent = 'Нет связи с prime.';
+  }
+  refresh(); loadChat();
+}
+document.getElementById('cmd').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const v = document.getElementById('text').value.trim(); if (!v) return;
+  document.getElementById('text').value = ''; send(v);
+});
+document.querySelectorAll('.chips button').forEach(b => b.onclick = () => send(b.dataset.q));
+document.getElementById('stageBtn').onclick = () => {
+  document.getElementById('reply').textContent = 'Режим презентации ждёт ключа Claude и подключения голоса.';
+};
+</script>
+</body>
+</html>

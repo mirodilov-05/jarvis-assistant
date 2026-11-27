@@ -56,9 +56,35 @@ def _system(text: str) -> str:
         ctx = "\n\nКонтекст пользователя:\n" + llm.context_text()
     else:
         ctx = f"\n\nСейчас {core.now():%A %d.%m.%Y %H:%M}. Режим: {core.active_profile()['title']}."
+    try:   # lessons from earlier corrections that look like this request
+        from learning import reflection
+        hints = reflection.hints_for(text)
+        if hints:
+            ctx += "\nУроки из прошлых ошибок (не повторяй их):\n" + "\n".join(hints)
+    except Exception:  # noqa: BLE001
+        pass
+    try:   # the four memory layers and the character for this owner
+        from cognition import memory as cm, personality as cp
+        rec = cm.recall(text, k=2)
+        extra = [f"Факт о владельце: {f}" for f in rec["semantic"]] + [f"Раньше вы сказали: {e['user'][:120]}" for e in rec["episodic"][:1]]
+        ctx += "\n" + cp.guidance(text) + ("\n" + "\n".join(extra) if extra else "")
+    except Exception:  # noqa: BLE001
+        pass
     mem = llm.memories_for(text) if llm else []
     if mem:   # semantic memory: what the user told Jarvis before that is about this request
         ctx += "\nПользователь раньше просил запомнить: " + " | ".join(mem)
+    results = core.get_results()
+    if results:   # the last search: «запусти второе видео» means item 2 of this list
+        ctx += "\nПоследний поиск на YouTube (по порядку): " + "; ".join(
+            f"{i + 1}. {r['title']}" for i, r in enumerate(results))
+    import pc_profile as _pc
+    pc = _pc.summary(600)
+    if pc:   # what this computer has, learned with the owner's consent
+        ctx += "\nКомпьютер пользователя: " + pc
+    import pc_index
+    idx = pc_index.summary(300)
+    if idx:
+        ctx += "\nФайлы на компьютере (только имена): " + idx
     prefs = preferences()
     if prefs:
         ctx += "\nПредпочтения пользователя: " + prefs
@@ -319,6 +345,14 @@ def run(text: str, source: str) -> str | None:
     content = llm._clean(content) if llm else content.strip()
     calls = [(n, a) for n, a in calls if n in tools.TOOLS][:6]
     core.log.info("Agent: %r -> tools %s", text, [n for n, _ in calls] or "none")
+    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
+    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
+    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
+    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
+    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
+    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
+    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
+    core.LAST_ACTION.update(skill="", tools=", ".join(n for n, _ in calls))
 
     if not calls:   # plain conversation / knowledge question
         if not core.feature("chat"):

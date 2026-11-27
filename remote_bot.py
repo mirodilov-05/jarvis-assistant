@@ -18,7 +18,6 @@ The token is stored in Windows Credential Manager ("telegram_bot:token").
 from __future__ import annotations
 
 import ctypes
-import json
 import re
 import sys
 import logging
@@ -34,7 +33,7 @@ import core
 
 log = logging.getLogger("remote_bot")
 API = "https://api.telegram.org/bot{token}/{method}"
-STATE = {"running": False, "error": "", "last_stranger": None, "username": ""}
+STATE = {"running": False, "error": "", "last_stranger": None, "username": "", "auth_error": False}
 _stop = threading.Event()
 _thread: threading.Thread | None = None
 _http = requests.Session()
@@ -51,11 +50,19 @@ def owner_id() -> int:
         return 0
 
 
+class AuthError(RuntimeError):
+    """Telegram refused the token (401). Retrying cannot help: the owner must paste a new one."""
+
+
 def call(method: str, http_timeout: float = 30, files=None, **params):
     r = _http.post(API.format(token=token(), method=method), data=params if files else None,
                    json=None if files else params, files=files, timeout=http_timeout)
+    if r.status_code == 401:
+        raise AuthError("токен не принят Telegram")
     data = r.json()
     if not data.get("ok"):
+        if data.get("error_code") == 401:
+            raise AuthError("токен не принят Telegram")
         raise RuntimeError(data.get("description", f"HTTP {r.status_code}"))
     return data["result"]
 
@@ -360,10 +367,14 @@ def handle_button(chat: int, data: str) -> str:
 
 def _loop() -> None:
     offset = 0
-    STATE.update(running=True, error="")
+    STATE.update(running=True, error="", auth_error=False)
     try:
         STATE["username"] = call("getMe", http_timeout=10).get("username", "")
         log.info("Telegram bot @%s started", STATE["username"])
+    except AuthError as e:                       # one short line, no traceback, no reconnect loop
+        STATE.update(running=False, error=str(e), auth_error=True)
+        log.warning("Telegram bot stopped: %s. Paste a new token in Settings → Keys.", e)
+        return
     except Exception as e:  # noqa: BLE001
         STATE.update(running=False, error=str(e)[:200])
         log.warning("Telegram bot can't start: %s", e)
@@ -371,6 +382,10 @@ def _loop() -> None:
     while not _stop.is_set():
         try:
             updates = call("getUpdates", http_timeout=40, offset=offset, timeout=30)   # long polling
+        except AuthError as e:
+            STATE.update(running=False, error=str(e), auth_error=True)
+            log.warning("Telegram bot stopped: %s", e)
+            return
         except Exception as e:  # noqa: BLE001
             STATE["error"] = str(e)[:200]
             time.sleep(5)
@@ -495,5 +510,6 @@ def notify(text: str) -> tuple[bool, str]:
 
 def status() -> dict:
     return {"has_token": bool(token()), "owner_id": owner_id(), "running": STATE["running"], "error": STATE["error"],
+            "auth_error": bool(STATE.get("auth_error")),
             "username": STATE["username"], "pending": STATE["last_stranger"],
             "enabled": bool(core.setting("remote", "enabled", True))}

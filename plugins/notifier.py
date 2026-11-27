@@ -60,7 +60,7 @@ def _check_mail() -> list[str]:
         return []
     newest = next((i for b in boxes for i in b["items"]), None)
     n = total - prev
-    return [f"Пришло новое письмо" + (f" от {newest['from']}: {newest['subject']}" if newest and n == 1 else f", новых: {n}")]
+    return ["Пришло новое письмо" + (f" от {newest['from']}: {newest['subject']}" if newest and n == 1 else f", новых: {n}")]
 
 
 @core.on_start

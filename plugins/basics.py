@@ -41,7 +41,7 @@ def help_skill(ctx: Ctx) -> str:
     "basics.time",
     title={"ru": "Сказать время", "uz": "Vaqtni aytish"},
     patterns={
-        "ru": [r"(который час|сколько (сейчас )?времени|какое (сейчас )?время)"],
+        "ru": [r"(?!.*(?:компьютер|ноут|комп|пк))(который час|сколько (сейчас )?времени|какое (сейчас )?время)"],
         "uz": [r"soat (necha|nechchi|nechi)", r"hozir soat", r"vaqt (necha|qancha)"],
     },
     examples={"ru": ["Который час?"], "uz": ["Soat necha?"]},

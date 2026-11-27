@@ -20,7 +20,7 @@ def _press(key: str, times: int = 1) -> None:
 @skill(
     "system.volume_up",
     title={"ru": "Сделать громче", "uz": "Ovozni balandlatish"},
-    patterns={"ru": [r"(громче|прибавь звук|увеличь (звук|громкость)|сделай громче)"],
+    patterns={"ru": [r"(громче|прибавь (звук|громкость)|увеличь (звук|громкость)|сделай громче|громкость (больше|вверх|плюс)|добавь громкость|погромче)"],
               "uz": [r"ovoz\w* (balandlat|oshir|kotar|kuchaytir)", r"balandroq"]},
     examples={"ru": ["Громче"], "uz": ["Ovozni balandlat"]},
     priority=10,
@@ -33,7 +33,7 @@ def volume_up(ctx: Ctx) -> str:
 @skill(
     "system.volume_down",
     title={"ru": "Сделать тише", "uz": "Ovozni pasaytirish"},
-    patterns={"ru": [r"(тише|убавь звук|уменьши (звук|громкость)|сделай тише)"],
+    patterns={"ru": [r"(тише|потише|убавь (звук|громкость)|уменьши (звук|громкость)|сделай тише|громкость (меньше|вниз|минус))"],
               "uz": [r"ovoz\w* (pasaytir|kamaytir|tushir)", r"pastroq"]},
     examples={"ru": ["Тише"], "uz": ["Ovozni pasaytir"]},
     priority=10,
@@ -91,7 +91,7 @@ def screenshot(ctx: Ctx) -> str:
 @skill(
     "system.lock",
     title={"ru": "Заблокировать компьютер", "uz": "Kompyuterni qulflash"},
-    patterns={"ru": [r"(заблокируй|блокируй) (компьютер|ноутбук|экран)"],
+    patterns={"ru": [r"(заблокируй|блокируй|блокировка) (компьютер\w*|ноутбук\w*|ноут\w*|комп\w*|экран\w*)|блокировка (компьютера|ноута|ноутбука|экрана)"],
               "uz": [r"(kompyuter|noutbuk|ekran)\w* (qulfla|blokla)\w*"]},
     examples={"ru": ["Заблокируй компьютер"], "uz": ["Kompyuterni qulfla"]},
     priority=10,

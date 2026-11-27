@@ -1,0 +1,11 @@
+# JARVIS PRIME OS — what is needed by the code that exists today.
+# Required:
+pyyaml>=6
+psutil>=5.9
+anthropic>=0.40
+aiohttp>=3.9
+# Optional (each feature says clearly when it is missing):
+mss>=9            # screen capture (os_vision)
+pillow>=10        # image scaling (os_vision)
+playwright>=1.45  # web agent; then run: playwright install chromium
+bleak>=0.22       # Bluetooth scan (device_hub)

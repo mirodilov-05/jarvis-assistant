@@ -7,7 +7,6 @@ Stored in data/reminders.json, so they survive restarts.
 """
 
 import datetime as dt
-import re
 import time
 import winsound
 
@@ -152,9 +151,22 @@ def list_reminders(ctx: Ctx) -> str:
     priority=18,
 )
 def cancel(ctx: Ctx) -> str:
+    """«отмени таймер» removes only timers, «отмени напоминание» only reminders, «отмени все» both."""
+    words = ctx.norm
+    if "все" in words:
+        drop = lambda r: True                              # noqa: E731
+        what = ("Все напоминания и таймеры отменены.", "Barcha eslatma va taymerlar bekor qilindi.")
+    elif "таймер" in words:
+        drop = lambda r: r.get("kind") == "timer"          # noqa: E731
+        what = ("Таймеры отменены.", "Taymerlar bekor qilindi.")
+    else:
+        drop = lambda r: r.get("kind") != "timer"          # noqa: E731
+        what = ("Напоминания отменены.", "Eslatmalar bekor qilindi.")
     with core.file_lock:
-        core.save_json(FILE, [])
-    return ctx.t("Все напоминания и таймеры отменены.", "Barcha eslatma va taymerlar bekor qilindi.")
+        items = core.load_json(FILE, [])
+        keep = [r for r in items if not drop(r)]
+        core.save_json(FILE, keep)
+    return ctx.t(*what)
 
 
 @core.on_start

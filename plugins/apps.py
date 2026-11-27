@@ -107,6 +107,55 @@ _TRANSLIT = str.maketrans({
 _index: dict[str, str] = {}
 
 
+def _registry_apps() -> dict[str, str]:
+    """Programs the Windows registry knows about, with no shortcut needed: App Paths (exe names) and the
+    uninstall list (DisplayIcon points to the program). Returns {name: path to the exe}."""
+    try:
+        import winreg
+    except ImportError:
+        return {}
+    found: dict[str, str] = {}
+
+    def read(hive, path, value=None):
+        try:
+            with winreg.OpenKey(hive, path) as k:
+                return winreg.QueryValueEx(k, value)[0] if value else None
+        except OSError:
+            return None
+
+    def subkeys(hive, path):
+        try:
+            with winreg.OpenKey(hive, path) as k:
+                i = 0
+                while True:
+                    try:
+                        yield winreg.EnumKey(k, i)
+                    except OSError:
+                        return
+                    i += 1
+        except OSError:
+            return
+
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        base = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"
+        for sub in subkeys(hive, base):
+            exe = sub.lower()
+            path = read(hive, f"{base}\\{sub}", "")
+            if path and exe.endswith(".exe") and Path(str(path).strip('"')).exists():
+                found.setdefault(exe[:-4], str(path).strip('"'))
+        uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+        for sub in subkeys(hive, uninstall):
+            name = read(hive, f"{uninstall}\\{sub}", "DisplayName")
+            icon = read(hive, f"{uninstall}\\{sub}", "DisplayIcon")
+            if not name or not icon:
+                continue
+            exe = str(icon).split(",")[0].strip('"')
+            low = exe.lower()
+            if low.endswith(".exe") and Path(exe).exists() and "package cache" not in low and "uninstall" not in low and not re.search(r"(setup|installer|uninstall)", Path(exe).stem.lower()):
+                found.setdefault(str(name).lower(), exe)
+    return found
+
+
 def app_index() -> dict[str, str]:
     if _index:
         return _index
@@ -121,6 +170,8 @@ def app_index() -> dict[str, str]:
             for p in root.rglob("*"):
                 if p.suffix.lower() in {".lnk", ".url", ".appref-ms"} and "uninstall" not in p.stem.lower():
                     _index.setdefault(p.stem.lower(), str(p))
+    for key, path in _registry_apps().items():   # programs without a shortcut (App Paths, uninstall list)
+        _index.setdefault(key, path)
     try:  # Microsoft Store apps (Telegram, WhatsApp, ...)
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
@@ -297,6 +348,21 @@ def open_app(ctx: Ctx) -> str:
     return open_target(ctx, ctx.group(1))
 
 
+@skill(
+    "apps.open_turn_on",
+    title={"ru": "«Включи телеграм» — открыть программу, если такая есть"},
+    patterns={"ru": [r"^(?:джарвис )?(?:включи|включить) (.+)$"]},
+    examples={"ru": ["Включи телеграм", "Включи блокнот"]},
+    priority=59,                 # before «включи <исполнитель>» (music), only if the name is a known program
+)
+def open_turn_on(ctx: Ctx):
+    name = ctx.group(1).strip()
+    finder = sys.modules.get("jarvis_plugin_appfinder")
+    if not (finder and finder.find(name, use_brain=False)):
+        return None              # «включи Imagine Dragons» is music, not a program
+    return open_target(ctx, name)
+
+
 def _processes() -> list[str]:
     out = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True, creationflags=NO_WINDOW)
     text = out.stdout.decode("cp866", errors="replace")
@@ -341,12 +407,103 @@ def close_app(ctx: Ctx):
         "uz": [r"(?:youtubedan|yutubdan|youtubeda|yutubda) (.+?) (?:qidir|top|qoy|och)\w*$", r"(.+?) (?:ni )?(?:youtubedan|yutubdan) (?:qidir|top|qoy)\w*$"],
     },
     examples={"ru": ["Найди на ютубе рецепт плова"], "uz": ["YouTube'dan palov retseptini qidir"]},
-    priority=55,
+    priority=38,
 )
 def youtube(ctx: Ctx) -> str:
     q = ctx.group(1)
+    items = youtube_list(q)
+    core.set_results("youtube", items)
     os.startfile("https://www.youtube.com/results?search_query=" + urllib.parse.quote(q))
+    if items:
+        return ctx.t(f"Ищу на YouTube: {q}. Первое: {items[0]['title']}. Скажите «запусти второе видео», если нужно другое.",
+                     f"YouTube'dan qidiryapman: {q}.")
     return ctx.t(f"Ищу на YouTube: {q}.", f"YouTube'dan qidiryapman: {q}.")
+
+
+_YT_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/124.0 Safari/537.36", "Accept-Language": "ru-RU,ru;q=0.9"}
+
+
+def youtube_list(query: str, n: int = 5) -> list[dict]:
+    """The first video results of a YouTube search, best first: [{id, title}]. Empty if YouTube does not answer."""
+    import requests
+    try:
+        r = requests.get("https://www.youtube.com/results", params={"search_query": query, "hl": "ru"},
+                         headers=_YT_UA, timeout=8)
+    except Exception:  # noqa: BLE001
+        return []
+    out, seen = [], set()
+    for vid, raw in re.findall(r'"videoRenderer":\{"videoId":"([\w-]{11})".*?"title":\{"runs":\[\{"text":"(.*?)"', r.text):
+        if vid in seen:
+            continue
+        seen.add(vid)
+        try:
+            title = json.loads('"' + raw + '"')
+        except ValueError:
+            title = raw
+        out.append({"id": vid, "title": title})
+        if len(out) >= n:
+            break
+    return out
+
+
+ORDINALS = {"первое": 0, "первый": 0, "второе": 1, "второй": 1, "третье": 2, "третий": 2,
+            "четвертое": 3, "четвёртое": 3, "четвертый": 3, "четвёртый": 3,
+            "пятое": 4, "пятый": 4, "последнее": -1, "последний": -1}
+
+
+def _tv_video(video_id: str) -> str:
+    """Play a YouTube video on the TV, through prime (the TV driver is there)."""
+    import json as _json
+    import urllib.request as _ur
+    body = _json.dumps({"text": f"открой видео {video_id} на телевизоре"}).encode("utf-8")
+    req = _ur.Request("http://127.0.0.1:8765/api/command", body, {"Content-Type": "application/json"})
+    try:
+        with _ur.urlopen(req, timeout=40) as r:
+            return str(_json.loads(r.read()).get("reply", "")).strip() or "Готово."
+    except Exception:  # noqa: BLE001
+        return "Система управления телевизором не запущена."
+
+
+@skill(
+    "apps.result_open",
+    title={"ru": "Открыть N-й результат поиска (первое видео, второе видео…)"},
+    patterns={"ru": [
+        r"^(?:джарвис )?(?:запусти|открой|включи|поставь|покажи|давай)(?: мне)?"
+        r"(?: (?P<ord>первое|первый|второе|второй|третье|третий|четвертое|четвёртое|четвертый|четвёртый|пятое|пятый|последнее|последний))?"
+        r"(?: (?P<noun>видео|ролик|клип|результат))?(?: номер (?P<n>\d+))?(?: (?:в|на) (?:ютуб\w*|youtube))?$"]},
+    examples={"ru": ["Запусти первое видео", "Открой второй результат"]},
+    priority=5,
+)
+def result_open(ctx: Ctx) -> str | None:
+    g = ctx.match.groupdict()
+    ord_, noun, num = g.get("ord"), g.get("noun"), g.get("n")
+    if not (ord_ or noun or num):
+        return None
+    kind = core.RESULTS.get("kind", "")
+    items = core.get_results(kind) if kind in ("youtube", "youtube_tv") else []
+    on_tv = kind == "youtube_tv"
+    if not items:
+        if ord_ or num:   # an explicit «first video» with nothing to pick from: say so instead of guessing
+            return ctx.t("Сначала скажите, что найти на YouTube, например «найди на ютубе рецепт плова».",
+                         "Avval YouTube'dan nima qidirishni ayting.")
+        return None       # «включи песню» with no search: let the music skills take it
+    if num:
+        idx = int(num) - 1
+    elif ord_:
+        idx = ORDINALS[ord_]
+        if idx == -1:
+            idx = len(items) - 1
+    else:
+        idx = 0
+    if not 0 <= idx < len(items):
+        return ctx.t(f"В результатах всего {len(items)}.", f"Natijalar jami {len(items)} ta.")
+    item = items[idx]
+    if on_tv:
+        reply = _tv_video(item["id"])
+        return ctx.t(f"На телевизоре: {item['title']}. {reply}", f"Televizorda: {item['title']}.")
+    os.startfile(f"https://www.youtube.com/watch?v={item['id']}&autoplay=1")
+    return ctx.t(f"Открываю: {item['title']}.", f"Ochyapman: {item['title']}.")
 
 
 @skill(

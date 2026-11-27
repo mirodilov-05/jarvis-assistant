@@ -13,8 +13,6 @@ dependencies = [
     "keyboard",
     "telethon",
     "edge-tts>=7.3.1",
-    "nvidia-cublas-cu12==12.4.5.8 ; sys_platform == 'win32'",
-    "nvidia-cudnn-cu12==9.1.0.70 ; sys_platform == 'win32'",
     "anthropic>=2.10.0",
     "keyring>=25.7.0",
     "icalendar>=7.3.0",
@@ -23,6 +21,19 @@ dependencies = [
     "pycaw>=20260927",
     "psutil>=7.2.2",
     "pywebview>=6.2.1",
+    "aiohttp>=3.9",
+    "pyyaml>=6",
+    "onnxruntime",
+    "tokenizers",
+    "av",
+    "pypdf>=7.2.0",
+]
+
+[project.optional-dependencies]
+# only for PCs with an NVIDIA card (about 1 GB): uv sync --extra gpu
+gpu = [
+    "nvidia-cublas-cu12==12.4.5.8 ; sys_platform == 'win32'",
+    "nvidia-cudnn-cu12==9.1.0.70 ; sys_platform == 'win32'",
 ]
 
 [tool.uv]

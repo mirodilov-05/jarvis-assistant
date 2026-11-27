@@ -10,8 +10,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 import connections
-import core
-from core import Ctx, plural_ru, skill
+from core import Ctx, skill
 
 IMAP_HOSTS = {"gmail.com": "imap.gmail.com", "googlemail.com": "imap.gmail.com", "yandex.ru": "imap.yandex.ru",
               "ya.ru": "imap.yandex.ru", "mail.ru": "imap.mail.ru", "bk.ru": "imap.mail.ru", "inbox.ru": "imap.mail.ru",

@@ -1,0 +1,16 @@
+# Scenes: one phrase runs several steps in order. Times are seconds between steps.
+# Add your own here; no code changes needed.
+workflows:
+  work:
+    phrase: "режим работы"
+    steps:
+      - {action: open_app, value: telegram}
+      - {action: wait, value: 2}
+      - {action: play_music, value: "музыка для работы"}
+  game:
+    phrase: "режим игры"
+    steps:
+      - {action: open_app, value: steam}
+      - {action: wait, value: 3}
+      - {action: open_app, value: discord}
+      - {action: set_volume, value: 40}

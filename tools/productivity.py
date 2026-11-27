@@ -2,7 +2,6 @@
 
 import re
 
-import core
 from tools import run_skill, tool
 
 S = {"type": "string"}

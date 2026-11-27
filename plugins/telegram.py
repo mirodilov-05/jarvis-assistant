@@ -3,11 +3,16 @@
 Connect in the app: Connections → Telegram (api_id/api_hash from my.telegram.org,
 then phone number and the login code Telegram sends you).
 The session is stored in data/telegram.session — keep it private.
+
+One client lives in one background thread with its own event loop. Every call goes through run(),
+so there is never a second client on the same session file, and no loop is ever created per request.
 """
 
 import asyncio
 import difflib
 import re
+import threading
+import time
 from pathlib import Path
 
 import connections
@@ -16,86 +21,128 @@ from core import Ctx, plural_ru, skill
 
 SESSION = str(core.DATA / "telegram")
 _login: dict = {}
+_auth: dict = {"ok": None, "t": 0.0, "warned": False}
+_loop_lock = threading.Lock()
+_state: dict = {"loop": None, "client": None, "key": None}
 
 
-def _client():
-    from telethon.sync import TelegramClient
+# ---- the single client -----------------------------------------------------
 
+def _ensure_loop() -> asyncio.AbstractEventLoop:
+    with _loop_lock:
+        if _state["loop"] is None or not _state["loop"].is_running():
+            ready = threading.Event()
+
+            def runner():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                _state["loop"] = loop
+                ready.set()
+                loop.run_forever()
+
+            threading.Thread(target=runner, daemon=True, name="telegram-user").start()
+            ready.wait(5)
+        return _state["loop"]
+
+
+async def _get_client():
     api_id, api_hash = connections.telegram_creds()
     if not api_id or not api_hash:
-        raise RuntimeError("no api credentials")
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    return TelegramClient(SESSION, int(api_id), api_hash)
+        raise RuntimeError("нет api_id и api_hash: введите их в Подключениях")
+    key = (str(api_id), api_hash)
+    if _state["client"] is None or _state["key"] != key:
+        from telethon import TelegramClient
+        if _state["client"] is not None:
+            await _state["client"].disconnect()
+        _state["client"] = TelegramClient(SESSION, int(api_id), api_hash)
+        _state["key"] = key
+    client = _state["client"]
+    if not client.is_connected():
+        await client.connect()
+    return client
 
 
-_auth: dict = {"ok": None, "t": 0.0}
+def run(fn, timeout: float = 60):
+    """Runs `async def fn(client)` on the Telegram thread and returns its result."""
+    loop = _ensure_loop()
+
+    async def wrapper():
+        return await fn(await _get_client())
+    return asyncio.run_coroutine_threadsafe(wrapper(), loop).result(timeout)
+
+
+# ---- status ----------------------------------------------------------------
+
+def _has_login() -> bool:
+    api_id, api_hash = connections.telegram_creds()
+    return bool(api_id and api_hash and Path(SESSION + ".session").exists() and _login.get("ok", True))
 
 
 def connected() -> bool:
-    api_id, api_hash = connections.telegram_creds()
-    if not (api_id and api_hash and Path(SESSION + ".session").exists() and _login.get("ok", True)):
+    """Does Telegram still accept this login? Asked at most every ten minutes (an hour after a refusal)."""
+    if not _has_login():
         return False
-    import time
-    if _auth["ok"] is None or time.time() - _auth["t"] > 600:      # does Telegram still accept this login?
-        try:
-            client = _client()
-            client.connect()
-            try:
-                _auth["ok"] = bool(client.is_user_authorized())
-            finally:
-                client.disconnect()
-        except Exception:  # noqa: BLE001 - offline: assume it still works
-            _auth["ok"] = True if _auth["ok"] is None else _auth["ok"]
-        _auth["t"] = time.time()
-        if not _auth["ok"]:
-            core.log.warning("Telegram account session is no longer authorised — log in again in ⚙ → Подключения")
-    return bool(_auth["ok"])
+    age = time.time() - _auth["t"]
+    if _auth["ok"] is False and age < 3600:
+        return False
+    if _auth["ok"] is True and age < 600:
+        return True
+    try:
+        ok = bool(run(lambda c: c.is_user_authorized(), timeout=8))   # a slow network must not hold a voice reply
+    except Exception:  # noqa: BLE001 — offline: keep the last answer
+        return bool(_auth["ok"]) if _auth["ok"] is not None else True
+    _auth.update(ok=ok, t=time.time())
+    if not ok and not _auth["warned"]:
+        _auth["warned"] = True
+        core.log.warning("Telegram account session is no longer authorised — log in again in Подключения")
+    if ok:
+        _auth["warned"] = False
+    return ok
 
 
 # ---- login flow used by the app ------------------------------------------
 
 def login_send_code(phone: str) -> str:
-    client = _client()
-    client.connect()
-    try:
-        if client.is_user_authorized():
+    async def go(c):
+        if await c.is_user_authorized():
             return "already"
-        sent = client.send_code_request(phone)
+        sent = await c.send_code_request(phone)
         _login.update(phone=phone, hash=sent.phone_code_hash)
         return "code_sent"
-    finally:
-        client.disconnect()
+    return run(go, timeout=60)
 
 
 def login_sign_in(code: str = "", password: str = "") -> str:
     from telethon.errors import SessionPasswordNeededError
 
-    client = _client()
-    client.connect()
-    try:
+    async def go(c):
         if password:
-            client.sign_in(password=password)
+            await c.sign_in(password=password)
         else:
             try:
-                client.sign_in(phone=_login.get("phone"), code=code, phone_code_hash=_login.get("hash"))
+                await c.sign_in(phone=_login.get("phone"), code=code, phone_code_hash=_login.get("hash"))
             except SessionPasswordNeededError:
                 return "password_needed"
-        me = client.get_me()
-        _auth.update(ok=True, t=0.0)
+        me = await c.get_me()
+        _auth.update(ok=True, t=time.time())
         _login.clear()
         return f"ok:{me.first_name or ''}"
-    finally:
-        client.disconnect()
+    return run(go, timeout=90)
 
 
 def logout() -> None:
+    async def go(c):
+        try:
+            await c.log_out()
+        finally:
+            await c.disconnect()
     try:
-        client = _client()
-        client.connect()
-        client.log_out()
-        client.disconnect()
-    except Exception:  # noqa: BLE001
+        run(go, timeout=30)
+    except Exception:  # noqa: BLE001 — the session file is removed below in any case
         pass
+    _state["client"] = None
+    _state["key"] = None
+    _auth.update(ok=None, t=0.0)
     for suffix in (".session", ".session-journal"):
         Path(SESSION + suffix).unlink(missing_ok=True)
 
@@ -111,11 +158,12 @@ def _text(msg, lang: str) -> str:
 
 
 def unread_dialogs(limit: int = 100) -> list[dict]:
-    with _client() as client:
-        dialogs = [d for d in client.get_dialogs(limit=limit) if d.unread_count > 0 and not d.archived]
+    async def go(c):
+        dialogs = [d for d in await c.get_dialogs(limit=limit) if d.unread_count > 0 and not d.archived]
         return [{"name": d.name, "unread": d.unread_count, "last": _text(d.message, "ru"),
                  "is_user": d.is_user, "muted": bool(getattr(d.dialog.notify_settings, "mute_until", None))}
                 for d in dialogs]
+    return run(go)
 
 
 def summary(lang: str, detailed: bool = True) -> str:
@@ -140,8 +188,8 @@ def summary(lang: str, detailed: bool = True) -> str:
     return s
 
 
-def find_dialog(client, who: str):
-    dialogs = client.get_dialogs(limit=300)
+async def find_dialog(client, who: str):
+    dialogs = await client.get_dialogs(limit=300)
     names = {d.name.lower(): d for d in dialogs if d.name}
     key = who.lower().strip()
     variants = {key, re.sub(r"(е|у|ю|ой|ей|и|ga|ka|qa|ni)$", "", key), re.sub(r"(е|у|ю)$", "а", key)}
@@ -157,33 +205,44 @@ def find_dialog(client, who: str):
 
 
 def read_chat(who: str, lang: str, limit: int = 5) -> str:
-    with _client() as client:
-        d = find_dialog(client, who)
+    async def go(c):
+        d = await find_dialog(c, who)
         if d is None:
-            return f"Не нашёл чат «{who}»." if lang == "ru" else f"«{who}» chati topilmadi."
+            return None, []
         count = max(1, min(d.unread_count or limit, 10))
-        msgs = list(reversed(client.get_messages(d.entity, limit=count)))
-        client.send_read_acknowledge(d.entity) if d.unread_count else None
+        msgs = list(reversed(await c.get_messages(d.entity, limit=count)))
+        senders = {}
+        for m in msgs:
+            if not m.out:
+                senders[m.id] = (await m.get_sender())
+        if d.unread_count:
+            await c.send_read_acknowledge(d.entity)
+        return d, [(m, senders.get(m.id)) for m in msgs]
+    d, msgs = run(go)
+    if d is None:
+        return f"Не нашёл чат «{who}»." if lang == "ru" else f"«{who}» chati topilmadi."
     lines = []
-    for m in msgs:
-        sender = ("вы" if lang == "ru" else "siz") if m.out else (getattr(m.sender, "first_name", None) or d.name)
-        lines.append(f"{sender}: {_text(m, lang)}")
+    for m, sender in msgs:
+        name = ("вы" if lang == "ru" else "siz") if m.out else (getattr(sender, "first_name", None) or d.name)
+        lines.append(f"{name}: {_text(m, lang)}")
     return (f"Чат {d.name}. " if lang == "ru" else f"{d.name} chati. ") + ". ".join(lines) + "."
 
 
 def resolve_name(who: str) -> str | None:
-    with _client() as client:
-        d = find_dialog(client, who)
+    async def go(c):
+        d = await find_dialog(c, who)
         return d.name if d else None
+    return run(go)
 
 
 def send(who: str, text: str) -> str:
-    with _client() as client:
-        d = find_dialog(client, who)
+    async def go(c):
+        d = await find_dialog(c, who)
         if d is None:
             raise RuntimeError(f"чат «{who}» не найден")
-        client.send_message(d.entity, text)
+        await c.send_message(d.entity, text)
         return d.name
+    return run(go)
 
 
 def _not_ready(ctx: Ctx):

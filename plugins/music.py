@@ -178,7 +178,7 @@ def _press_until_playing(url: str, run: int, timeout: float = 40.0) -> tuple[boo
     return False, why
 
 
-def play(query: str = "", ask: bool = False) -> str:
+def play(query: str = "", ask: bool = False, service: str | None = None) -> str:
     """Start music playing. query: artist / track / mood / «мою волну»; empty + ask -> Jarvis asks what you want."""
     q = re.sub(r"\b(?:в|на|из|через)\s+(?:яндекс\w*(?:\s+музык\w*)?|ютуб\w*(?:\s+музык\w*)?|youtube)\b", "", (query or ""), flags=re.I)
     q = re.sub(r"^(?:что[ -]?нибудь|какую[ -]?нибудь|какое[ -]?нибудь|чего[ -]?нибудь)\s+(?=\S)", "", q.strip(" .!?,"), flags=re.I)
@@ -195,7 +195,7 @@ def play(query: str = "", ask: bool = False) -> str:
             q = v.replace(" mix", "")
             break
     wave = generic or bool(WAVE_WORDS.match(low))
-    service = core.setting("music", "service", "yandex")
+    service = service or core.setting("music", "service", "yandex")
     if service == "yandex":
         if wave:
             _yandex_play("https://music.yandex.ru/", "Моя волна")
@@ -220,11 +220,25 @@ def play(query: str = "", ask: bool = False) -> str:
     return f"Включаю: {title[:80]}."
 
 
+def _is_other_command(norm: str) -> bool:
+    """True when the phrase is a command that a specific skill (not music, not the catch-all) would take."""
+    for sk in core.SKILLS:
+        if sk.name.startswith("music.") or sk.name in ("macros.run",) or sk.priority > 50:
+            continue
+        for pat in sk.patterns.get("ru", []):
+            if pat.search(norm):
+                return True
+    return False
+
+
 @skill("music.choice", title={"ru": "Ответ на «Что включить?»"},
        patterns={"ru": [r"^(?:джарвис )?(?:давай |включи |поставь |ну )?(.+)$"]}, examples={"ru": []}, priority=-1)
 def choice(ctx: Ctx):
     if time.time() > _await["until"]:
         return None              # Jarvis didn't ask anything: not for us
+    if _is_other_command(ctx.norm):
+        _await["until"] = 0.0    # a real command for another skill («включи телик», «открой ютуб»): drop the question
+        return None
     _await["until"] = 0.0
     if re.match(r"^(?:нет|не надо|ничего|отмена|стоп|не нужно)$", ctx.norm):
         return "Хорошо, без музыки."
@@ -246,6 +260,32 @@ def play_skill(ctx: Ctx) -> str:
     return play(ctx.group(1) or "", ask=True)
 
 
+@skill(
+    "music.youtube",
+    title={"ru": "«Поставь песню X в ютуб» — играет именно эта песня на YouTube"},
+    patterns={"ru": [
+        r"^(?:джарвис )?(?:включи|поставь|запусти|вруби|сыграй)(?: мне)?(?: песню| трек| музыку| клип)? (?P<q>.+?) (?:в|на) (?:ютуб\w*|youtube)(?: музык\w*)?$",
+        r"^(?:джарвис )?(?:включи|поставь|запусти|вруби|сыграй) (?:в|на) (?:ютуб\w*|youtube) (?P<q>.+)$",
+    ]},
+    examples={"ru": ["Поставь песню Believer в ютуб", "Включи Imagine Dragons на ютубе"]},
+    priority=3,                      # before the Yandex skills, so an explicit «ютуб» is never sent to Yandex
+)
+def youtube_play(ctx: Ctx) -> str:
+    q = (ctx.match.groupdict().get("q") or "").strip(" .!?,")
+    # «первое видео в YouTube» is a choice from the last search, not a song name: the result skill takes it
+    if re.search(r"\b(первое|второе|третье|последнее|первый|второй|видео|ролик|результат)\b", q):
+        return None
+    # «какой-нибудь», «что-нибудь»: no song was named, so play something popular instead of a random title
+    if re.search(r"какой\s*-?\s*нибудь|что\s*-?\s*нибудь|какую\s*-?\s*нибудь|любую|любой", q):
+        q = "лучшие песни"
+    if not q:
+        return "Какую песню включить на YouTube, сэр?"
+    return play(q, service="youtube")
+
+
+core._LONG_OK.add("music.youtube")
+
+
 @skill("music.artist", title={"ru": "«Включи <исполнитель>» — сразу играет"},
        patterns={"ru": [r"^(?:джарвис )?(?:включи|поставь|вруби) ([a-zа-яё0-9][\w .'&-]{1,40})$"]},
        examples={"ru": ["Включи G-Eazy", "Поставь Скриптонит"]}, priority=90)
@@ -264,10 +304,7 @@ core._LONG_OK.update({"music.play", "music.artist"})
 
 def _playing() -> bool:
     try:
-        import os
-
         import pcx
-        me = os.getpid()
         return any(s for s in pcx.playing_apps() if s not in ("python.exe", "pythonw.exe"))
     except Exception:  # noqa: BLE001
         return True      # can't tell: behave like the plain media key

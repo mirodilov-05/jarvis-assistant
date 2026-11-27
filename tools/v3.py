@@ -140,6 +140,12 @@ _RATE_CACHE: dict = {}
 @tool("rates", "Курсы прямо сейчас: биткоин, эфир, USDT (в долларах) и доллар в рублях и сумах.",
       {"what": {**S, "description": "Что интересует: bitcoin, ethereum, usdt, usd, все (по умолчанию все)"}})
 def rates(what: str = "") -> str:
+    """Exchange rates change slowly for this purpose: the same answer is reused for five minutes."""
+    import core
+    return core.memo(f"rates:{what}", 300, lambda: _rates_now(what))
+
+
+def _rates_now(what: str = "") -> str:
     import concurrent.futures as cf
 
     import requests

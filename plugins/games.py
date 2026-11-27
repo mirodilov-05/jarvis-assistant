@@ -10,7 +10,6 @@ import re
 import winreg
 from pathlib import Path
 
-import core
 from core import Ctx, skill
 
 _cache: list[dict] = []

@@ -15,7 +15,6 @@ Stored in data/goals.json, data/repeats.json, data/limits.json (+ data/limits_us
 from __future__ import annotations
 
 import datetime as dt
-import random
 import re
 import threading
 import time
@@ -225,7 +224,7 @@ def _due_repeat(item: dict, now: dt.datetime) -> bool:
 
 
 @skill("goals.repeat_list", title={"ru": "Мои повторяющиеся напоминания"},
-       patterns={"ru": [r"^(?:джарвис )?мои (?:повторяющиеся )?напоминания$", r"^(?:джарвис )?какие напоминания$"]},
+       patterns={"ru": [r"^(?:джарвис )?мои (?:повторяющиеся )?напоминания$", r"^(?:джарвис )?какие (?:повторяющиеся )?напоминания повтор\w*$"]},
        examples={"ru": ["Мои напоминания"]}, priority=5)
 def repeat_list(ctx: Ctx) -> str:
     items = core.load_json(REPEATS, [])

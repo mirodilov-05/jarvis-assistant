@@ -126,3 +126,7 @@ imap_host = "imap.gmail.com"
 # Then run "Подключить Telegram.bat" once to log in. Leave empty to disable.
 api_id = ""
 api_hash = ""
+
+[vpn]
+# Name of an installed WireGuard tunnel («включи VPN» starts it). Empty = VPN control is off.
+tunnel = ""

@@ -65,6 +65,21 @@ def ensure_ollama() -> None:
         log("started Ollama")
 
 
+def ensure_prime() -> None:
+    """Prime (TV, study cards) runs next to Jarvis. Started here, so it also comes back after a reboot or a crash."""
+    main_py = BASE / "prime" / "main.py"
+    if not main_py.exists():
+        return
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        if s.connect_ex(("127.0.0.1", 8765)) == 0:
+            return
+    out = open(DATA / "prime.log", "ab")
+    subprocess.Popen([str(PYTHONW.with_name("python.exe")), "-X", "utf8", str(main_py)], cwd=BASE, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+                     creationflags=NO_WINDOW | BELOW_NORMAL)
+    log("started Prime")
+
+
 def heartbeat_age() -> float:
     try:
         return time.time() - int((DATA / "heartbeat").read_text())
@@ -72,14 +87,20 @@ def heartbeat_age() -> float:
         return 0.0
 
 
+_SINGLE = None  # keeps the single-instance socket open
+
+
 def main() -> None:
-    _lock = single_instance()  # noqa: F841
+    global _SINGLE
+    _SINGLE = single_instance()  # held for the whole life of the supervisor
     ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), BELOW_NORMAL)
     log("supervisor started")
     first = True
     crashes: list[float] = []
     while True:
         ensure_ollama()
+        ensure_prime()
+        prime_check = time.time()
         (DATA / "heartbeat").unlink(missing_ok=True)
         args = [str(PYTHONW), str(BASE / "assistant.py")]
         if first and "--app" in sys.argv:
@@ -92,6 +113,9 @@ def main() -> None:
         started = time.time()
         while proc.poll() is None:
             time.sleep(10)
+            if time.time() - prime_check > 60:
+                ensure_prime()
+                prime_check = time.time()
             if time.time() - started > 120 and heartbeat_age() > 60:
                 log("heartbeat stale — restarting Jarvis")
                 proc.kill()

@@ -160,7 +160,7 @@ def _body(model: str, messages: list[dict], tools: list[dict] | None, max_tokens
 
 
 def chat(messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 400, temperature: float = 0.3,
-         vision: bool = False, timeout: float = 25) -> tuple[str, list[tuple[str, dict]]]:
+         vision: bool = False, timeout: float = 12) -> tuple[str, list[tuple[str, dict]]]:
     """-> (text, [(tool_name, args), ...]). Tries the providers in order; raises CloudError if all fail."""
     errors = []
     for name, base, model in _providers(vision):

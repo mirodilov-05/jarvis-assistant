@@ -1,0 +1,12 @@
+# Devices. Copy this file to devices.yaml (that one stays on your PC and is not published).
+# The TV can also be found by itself: Jarvis window -> «Анализ ноутбука» -> «Найти телевизор».
+devices:
+  tv_samsung:
+    type: smart_tv
+    protocol: samsung_tizen
+    ip: ""
+    mac: ""
+    mac_wifi: ""
+  headphones:
+    type: bluetooth_audio
+    name_contains: ""

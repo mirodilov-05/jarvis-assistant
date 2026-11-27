@@ -40,7 +40,8 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(BASE / "data" / "stderr.log", "a", encoding="utf-8")
 
-import cuda_setup  # noqa: E402,F401  (must run before faster_whisper is imported)
+import importlib  # noqa: E402
+importlib.import_module("cuda_setup")  # side effect: must run before faster_whisper is imported
 import numpy as np  # noqa: E402
 import sounddevice as sd  # noqa: E402
 
@@ -261,7 +262,8 @@ class Speaker:
 
         if time.time() < self._edge_off_until:
             return False
-        voice = cfg("voice", f"edge_voice_{lang}") or {"ru": "ru-RU-DmitryNeural", "uz": "uz-UZ-SardorNeural"}[lang]
+        voice = cfg("voice", f"edge_voice_{lang}") or {"ru": "ru-RU-DmitryNeural", "uz": "uz-UZ-SardorNeural",
+                                                 "en": "en-US-GuyNeural", "ja": "ja-JP-KeitaNeural"}[lang]
         path = os.path.join(tempfile.gettempdir(), "jarvis_tts.mp3")
         # Russian has an offline voice (Piper) to fall back on at once, so Edge gets one short try.
         # Before, two 6-second tries meant a silent pause of up to 12 s on every reply.
@@ -1181,6 +1183,11 @@ class Listener:
         text, lang, reliable = res or transcribe(audio, accurate=True)
         if gen != self.gen:
             return
+        try:   # how the voice sounded compared with the owner's usual voice (tired / stressed)
+            from cognition import voice_mood
+            voice_mood.note(audio)
+        except Exception:  # noqa: BLE001 — mood is a nicety, never a reason to ignore a command
+            log.exception("voice mood failed")
         if over_speech and not woken and own_words(text) >= 0.6:      # his own «Слушаю, сэр» came back
             self.set_mode("command", 6)
             return
@@ -1393,6 +1400,31 @@ def _record(event: dict) -> None:
 core.subscribe(_record)
 
 
+def _note_correction(text: str) -> bool:
+    """«Нет, я имел в виду…»: the previous exchange is stored as a correction, for the nightly lessons."""
+    try:
+        from learning import correction_detector, store
+        hit = correction_detector.detect(text)
+        last = core.read_history(1)
+        if hit and last:
+            store.add_feedback(last[-1].get("user", ""), last[-1].get("reply", ""), rating=-1,
+                               skill=last[-1].get("skill", ""), comment="поправка", severity=hit["severity"])
+            return True
+    except Exception:  # noqa: BLE001 — learning must never break an answer
+        log.exception("correction note failed")
+    return False
+
+
+def _remember_turn(text: str, reply: str, source: str, corrected: bool) -> None:
+    """The episodic memory: every exchange, with its mood and whether the owner corrected it."""
+    try:
+        from cognition import memory
+        memory.record_turn(text, reply, source, skill=core.LAST_ACTION.get("skill", ""),
+                           valence=-1.0 if corrected else 0.0, mistake=corrected)
+    except Exception:  # noqa: BLE001
+        log.exception("episode not saved")
+
+
 def handle(text: str, lang: str, source: str, speak: bool, echo: bool = True, alive=lambda: True) -> str:
     if echo:
         core.emit({"type": "message", "role": "user", "text": text, "lang": lang, "source": source})
@@ -1400,7 +1432,10 @@ def handle(text: str, lang: str, source: str, speak: bool, echo: bool = True, al
         speaker.stop()
         return "Хорошо." if lang == "ru" else "Xo'p."
     t0 = time.time()
+    core.LAST_ACTION.update(skill="", tools="")
+    corrected = _note_correction(text)
     reply = core.styled(core.route(text, lang, source, core.CONFIG), lang)
+    _remember_turn(text, reply, source, corrected)
     log.info("Reply [%s] in %.2fs: %s", lang, time.time() - t0, reply)
     if not alive():          # you interrupted while he was thinking
         log.info("Reply dropped: interrupted")
@@ -1408,6 +1443,7 @@ def handle(text: str, lang: str, source: str, speak: bool, echo: bool = True, al
     if source != "голос":
         core.FOLLOWUP.clear()
     core.log_exchange(source, lang, text, reply)
+    core.add_history(source, text, reply, lang, "brain" if core.LAST_ACTION.get("tools") else "skill" if core.LAST_ACTION.get("skill") else "rules")
     core.emit({"type": "message", "role": "jarvis", "text": reply, "lang": lang, "source": source})
     if core.mode() == "quiet" and source != "голос-срочно":
         speak = False     # «Тихий» character: answers only on screen
@@ -1460,7 +1496,7 @@ def _plugin(name: str):
 
 
 def app_state() -> dict:
-    tasks_mod, apps_mod = _plugin("tasks"), _plugin("apps")
+    apps_mod = _plugin("apps")
     return {
         "status": STATUS["state"],
         "tasks": core.load_json(core.DATA / "tasks.json", []),
@@ -1677,7 +1713,8 @@ def run_server() -> None:
 
     async def say(r):
         body = await r.json()
-        speaker.say(str(body.get("text", ""))[:300] or "Проверка голоса, сэр.", "ru")
+        lang = body.get("lang") if body.get("lang") in ("ru", "en", "ja") else "ru"
+        speaker.say(str(body.get("text", ""))[:300] or "Проверка голоса, сэр.", lang)
         return web.json_response({"ok": True})
 
     async def v3_get(_r):
@@ -1826,8 +1863,229 @@ def run_server() -> None:
     async def telemetry_get(_r):
         return web.json_response(await asyncio.to_thread(telemetry))
 
+    async def pc_profile_get(_r):
+        import pc_profile
+        d = await asyncio.to_thread(pc_profile.load)
+        if not d:
+            return web.json_response({"scanned": False})
+        return web.json_response({"scanned": True, "at": d.get("scanned_at"), "browser": d.get("browser", ""),
+                                  "apps": len(d.get("installed") or d.get("apps") or []), "hardware": d.get("hardware", {})})
+
+    async def pc_scan_post(_r):
+        import pc_profile
+        d = await asyncio.to_thread(pc_profile.scan)
+        return web.json_response({"ok": True, "at": d.get("scanned_at"), "apps": len(d.get("installed") or d.get("apps") or [])})
+
+    async def pc_index_get(_r):
+        import pc_index
+        d = await asyncio.to_thread(pc_index.info)
+        d["running"] = pc_index.running()
+        return web.json_response(d)
+
+    async def pc_index_post(r):
+        import pc_index
+        body = await r.json() if r.can_read_body else {}
+        if not body.get("confirm"):   # the owner must agree explicitly
+            return web.json_response({"ok": False, "message": "Нужно согласие: confirm=true"}, status=400)
+        started = pc_index.start_background()
+        return web.json_response({"ok": started, "running": True,
+                                  "message": "Изучаю имена файлов в фоне" if started else "Уже изучаю файлы"})
+
+    async def activity_get(_r):
+        import activity
+        return web.json_response({"enabled": activity.enabled(), "running": activity.running(),
+                                  "today": await asyncio.to_thread(activity.today_summary)})
+
+    async def setup_get(_r):
+        import setup_doctor
+        checks = await asyncio.to_thread(setup_doctor.check_all)
+        todo = [c for c in setup_doctor.missing_auto(checks) if c.fix.id != "reboot"]
+        return web.json_response({
+            "checked": setup_doctor.was_checked(),
+            "attention": any(c.status in ("missing", "warn") for c in checks),
+            "summary": setup_doctor.summary(checks),
+            "auto_ids": [c.fix.id for c in todo],
+            "auto_names": [c.fix.label for c in todo],
+            "manual": [c.fix.label for c in checks if c.fix and c.fix.kind == "manual" and c.status == "missing"],
+            "items": [{"id": c.id, "title": c.title, "status": c.status, "detail": c.detail,
+                       "fix": (c.fix.label if c.fix else ""), "fix_id": (c.fix.id if c.fix else ""),
+                       "size": (c.fix.size if c.fix else "")} for c in checks],
+        })
+
+    async def setup_run(r):
+        import setup_doctor
+        body = await r.json() if r.can_read_body else {}
+        if not body.get("confirm"):   # downloads and installs only after the owner's yes
+            return web.json_response({"ok": False, "message": "Нужно подтверждение: confirm=true"}, status=400)
+        allowed = [i for i in body.get("ids", []) if i in setup_doctor.AUTO_STEPS and i != "reboot"]
+        started = setup_doctor.run_all_in_background(allowed)
+        return web.json_response({"ok": started, "running": True, "ids": allowed})
+
+    async def setup_last(_r):
+        import setup_doctor
+        return web.json_response(setup_doctor.last_run())
+
+    async def programs_get(_r):
+        import programs
+        return web.json_response({"items": await asyncio.to_thread(programs.list_programs, 24)})
+
+    async def hud_get(_r):
+        """Everything the 30 home widgets show, in one answer."""
+        import hud_data
+
+        def collect() -> dict:
+            out = hud_data.snapshot()
+            today = core.now().strftime("%Y-%m-%d")
+            tasks = core.load_json(core.DATA / "tasks.json", [])
+            out.update(status=STATUS["state"], game={"on": GAME["on"], "name": GAME["name"]}, mode=core.mode(),
+                       tasks=[t for t in tasks if not t.get("done")] + [t for t in tasks if t.get("done")][-30:],
+                       reminders=sorted(core.load_json(core.DATA / "reminders.json", []), key=lambda r: r["at"]),
+                       goals=core.load_json(core.DATA / "goals.json", []), limits=core.load_json(core.DATA / "limits.json", []),
+                       usage=core.load_json(core.DATA / "limits_usage.json", {}).get(today, {}),
+                       history=[h for h in core.read_history(400) if h["user"] != "статус телевизора"][-12:], voice_enrolled=vp.enrolled(),
+                       notes=len(sys.modules["jarvis_plugin_notes"].all_notes()) if "jarvis_plugin_notes" in sys.modules else 0)
+            try:
+                import pcx
+                out["focus"] = {"until": pcx.FOCUS["until"] if pcx.focus_active() else 0, "closed": pcx.FOCUS["closed"]}
+            except Exception:  # noqa: BLE001
+                out["focus"] = {"until": 0, "closed": 0}
+            import setup_doctor
+            from cognition import personality, show
+            out.update(first_run=not setup_doctor.wizard_done(), lite=bool(core.setting("ui", "hud_lite", False)),
+                       show=show.public(), stage=personality.stage())
+            return out
+        return web.json_response(await asyncio.to_thread(collect))
+
+    def _own_page(r) -> None:
+        if r.headers.get("X-Jarvis") != "1":       # only this window's own buttons, never another web page
+            raise web.HTTPForbidden()
+
+    async def optimize_get(_r):
+        import optimizer
+        return web.json_response(await asyncio.to_thread(optimizer.analyze))
+
+    async def optimize_post(r):
+        import optimizer
+        _own_page(r)
+        body = await r.json()
+        return web.json_response({"items": await asyncio.to_thread(optimizer.apply, [str(i) for i in body.get("ids", [])][:60])})
+
+    async def optimize_undo(r):
+        import optimizer
+        _own_page(r)
+        return web.json_response({"done": await asyncio.to_thread(optimizer.undo)})
+
+    async def find_tv(r):
+        import optimizer
+        _own_page(r)
+        return web.json_response(await asyncio.to_thread(optimizer.find_tv))
+
+    async def wizard_done(r):
+        import setup_doctor
+        _own_page(r)
+        setup_doctor.mark_wizard()
+        setup_doctor.mark_checked()
+        return web.json_response({"ok": True})
+
+    async def hud_action(r):
+        """One widget button. The custom header keeps other web pages from pressing it."""
+        import hud_data
+        if r.headers.get("X-Jarvis") != "1":
+            raise web.HTTPForbidden()
+        body = await r.json()
+        try:
+            out = await asyncio.to_thread(hud_data.action, str(body.get("kind", "")), body)
+        except ValueError as e:
+            return web.json_response({"ok": False, "reply": str(e)})
+        except Exception as e:  # noqa: BLE001 — the widget shows what went wrong
+            log.exception("hud action %s", body.get("kind"))
+            return web.json_response({"ok": False, "reply": f"не получилось: {type(e).__name__}"})
+        return web.json_response({"ok": True, **out})
+
+    async def hud_icon(r):
+        import programs
+        name = r.match_info["id"]
+        f = programs.ICONS / f"{name}.png"
+        if not name.isalnum() or not f.exists():
+            raise web.HTTPNotFound()
+        return web.FileResponse(f, headers={"Cache-Control": "max-age=86400"})
+
+    def _own(r) -> None:
+        if r.headers.get("X-Jarvis") != "1":
+            raise web.HTTPForbidden()
+
+    async def memory_facts_get(_r):
+        from cognition import memory
+        return web.json_response({"facts": await asyncio.to_thread(memory.facts),
+                                  "habits": await asyncio.to_thread(memory.habits, 8)})
+
+    async def memory_facts_post(r):
+        from cognition import memory
+        _own(r)
+        body = await r.json()
+        try:
+            await asyncio.to_thread(memory.add_fact, str(body.get("text", "")))
+        except ValueError as e:
+            return web.json_response({"ok": False, "message": str(e)}, status=400)
+        return web.json_response({"ok": True})
+
+    async def memory_facts_delete(r):
+        from cognition import memory
+        _own(r)
+        await asyncio.to_thread(memory.delete_fact, int(r.match_info["id"]))
+        return web.json_response({"ok": True})
+
+    async def shield_get(_r):
+        from cognition import shield
+        p = await asyncio.to_thread(shield.ports)
+        return web.json_response({"ports": p, "vpn": await asyncio.to_thread(shield.vpn)})
+
+    async def docs_get(_r):
+        from cognition import docs
+        return web.json_response({"chunks": await asyncio.to_thread(docs.count), **docs.STATE})
+
+    async def docs_index(r):
+        from cognition import docs
+        _own(r)
+        body = await r.json() if r.can_read_body else {}
+        if not body.get("confirm"):
+            return web.json_response({"ok": False, "message": "Нужно согласие: confirm=true"}, status=400)
+        started = docs.start_background()
+        return web.json_response({"ok": started, "message": "Изучаю документы" if started else "Уже изучаю"})
+
+    async def feedback_post(r):
+        """👍 / 👎 under the last answer. Only this window can send it (custom header)."""
+        from learning import store
+        if r.headers.get("X-Jarvis") != "1":
+            raise web.HTTPForbidden()
+        body = await r.json()
+        rating = 1 if str(body.get("rating")) in ("1", "up", "+1") else -1
+        last = await asyncio.to_thread(core.read_history, 1)
+        if not last:
+            return web.json_response({"ok": False, "message": "Пока нечего оценивать."})
+        last = last[-1]
+        await asyncio.to_thread(store.add_feedback, last.get("user", ""), last.get("reply", ""), rating,
+                                last.get("skill", ""), "оценка", 0.5 if rating < 0 else 0.0)
+        return web.json_response({"ok": True, "message": "Спасибо, запомнил." if rating > 0 else "Понял, учту."})
+
+    async def learning_metrics(_r):
+        from learning import evaluation
+        return web.json_response(await asyncio.to_thread(evaluation.metrics))
+
+    async def learning_reflect(r):
+        from learning import reflection
+        if r.headers.get("X-Jarvis") != "1":
+            raise web.HTTPForbidden()
+        return web.json_response(await asyncio.to_thread(reflection.reflect))
+
+    async def skills_get(_r):
+        return web.json_response({"count": len(core.SKILLS)})
+
     async def state(_r):
         return web.json_response(await asyncio.to_thread(app_state))
+
+    async def history_get(_r):
+        return web.json_response({"items": await asyncio.to_thread(core.read_history, 200)})
 
     async def command(r):
         body = await r.json()
@@ -2040,6 +2298,20 @@ def run_server() -> None:
         web.get("/api/remote", remote_get), web.post("/api/remote", remote_set),
         web.post("/api/capsule", capsule), web.post("/api/window/hide", window_hide), web.post("/api/say", say), web.post("/api/ui/open", ui_open),
         web.get("/api/state", state), web.post("/api/command", command),
+        web.get("/api/history", history_get),
+        web.get("/api/pc-profile", pc_profile_get), web.post("/api/pc-scan", pc_scan_post),
+        web.get("/api/pc-index", pc_index_get), web.post("/api/pc-index", pc_index_post),
+        web.get("/api/activity", activity_get), web.get("/api/programs", programs_get),
+        web.get("/api/skills", skills_get),
+        web.post("/api/feedback", feedback_post), web.get("/api/learning/metrics", learning_metrics),
+        web.get("/api/memory/facts", memory_facts_get), web.post("/api/memory/facts", memory_facts_post),
+        web.delete("/api/memory/facts/{id}", memory_facts_delete),
+        web.get("/api/shield", shield_get), web.get("/api/docs", docs_get), web.post("/api/docs/index", docs_index),
+        web.post("/api/learning/reflect", learning_reflect),
+        web.get("/api/hud", hud_get), web.get("/api/optimize", optimize_get), web.post("/api/optimize", optimize_post),
+        web.post("/api/optimize/undo", optimize_undo), web.post("/api/find-tv", find_tv), web.post("/api/setup/done", wizard_done),
+        web.post("/api/hud/action", hud_action), web.get("/api/hud/icon/{id}", hud_icon),
+        web.get("/api/setup", setup_get), web.post("/api/setup/run", setup_run), web.get("/api/setup/last", setup_last),
         web.post("/api/listen", listen), web.post("/api/stop", stop_speaking),
         web.post("/api/voice/{action}", voice_action),
         web.post("/api/tasks", tasks_add), web.patch("/api/tasks/{id}", tasks_patch),

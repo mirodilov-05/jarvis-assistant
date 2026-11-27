@@ -8,7 +8,6 @@ import ctypes
 import re
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -95,7 +94,20 @@ def set_clipboard(text: str) -> bool:
 # System doctor
 # ---------------------------------------------------------------------------
 
+_DIAG_CACHE = {"at": 0.0, "value": None}
+
+
 def diagnostics() -> tuple[str, str]:
+    """(spoken summary, full card text). Reused for 10 s: asking twice in a row costs nothing."""
+    import time as _time
+    if _DIAG_CACHE["value"] and _time.time() - _DIAG_CACHE["at"] < 10:
+        return _DIAG_CACHE["value"]
+    value = _diagnostics_now()
+    _DIAG_CACHE.update(at=_time.time(), value=value)
+    return value
+
+
+def _diagnostics_now() -> tuple[str, str]:
     """(spoken summary, full card text)."""
     import psutil
     for p in psutil.process_iter():
@@ -319,7 +331,7 @@ def web_snippets(query: str, n: int = 6) -> list[tuple[str, str, str]]:
 
 @skill("pro.web_answer", title={"ru": "Узнать в интернете и ответить голосом"},
        patterns={"ru": [r"^(?:джарвис )?(?:узнай|выясни|разузнай|загугли|погугли)(?: в интернете| в сети)?,? (.+)$",
-                        r"^(?:джарвис )?найди (?:в интернете |в сети )?(?:ответ|информацию|инфу)(?: на вопрос| о| про)? (.+)$"]},
+                        r"^(?:джарвис )?найди (?:в интернете |в сети )?(?:ответ|информацию|инфу)(?: на вопрос| о| про)?:? (.+)$"]},
        examples={"ru": ["Узнай, когда выходит GTA 6", "Найди ответ: высота Эвереста"]}, priority=6)
 def web_answer(ctx: Ctx) -> str:
     q = ctx.group(1).strip(" ?.")

@@ -120,7 +120,7 @@
     { id: "tv", col: "r", size: "s" }, { id: "calendar", col: "r", size: "m" }, { id: "messengers", col: "r", size: "s" },
     { id: "brain", col: "r", size: "s" }, { id: "history", col: "r", size: "m" },
   ];
-  const DEFAULT_PREFS = { palette: "arctic", look: "glass", density: "cozy", anim: true, radius: 16, fs: 14,
+  const DEFAULT_PREFS = { palette: "arctic", look: "glass", density: "cozy", anim: true, radius: 16, fs: 14, skin: "orbit", core: "globe",
     layout: { mode: "center", items: DEFAULT_ITEMS, presetName: "Главная" } };
   const PRESETS = {
     "Полный": null,
@@ -147,7 +147,8 @@
     st.setProperty("--accent", p.a); st.setProperty("--accent-rgb", p.rgb); st.setProperty("--bg", p.bg);
     st.setProperty("--r", PREFS.radius + "px"); st.setProperty("--fs", PREFS.fs + "px");
     root.dataset.look = PREFS.look; root.dataset.density = PREFS.density; root.dataset.anim = PREFS.anim ? "on" : "off";
-    if (window.JarvisCore) { JarvisCore.setShape(p.shape, p.rgb); }
+    const shape = PREFS.shape && PREFS.shape !== "auto" ? PREFS.shape : p.shape;     // the owner's figure, or the colour's own
+    if (window.JarvisCore) { JarvisCore.setShape(shape, p.rgb); JarvisCore.setCore && JarvisCore.setCore(PREFS.core); }
   }
 
   /* ---------- live data ---------- */
@@ -162,6 +163,21 @@
   const bar = (p, cls = "") => `<div class="bar ${cls}"><i style="width:${clamp(Number(p) || 0, 0, 100)}%"></i></div>`;
   const kv = (k, v, cls = "") => `<div class="kv"><span>${esc(k)}</span><b class="${cls}">${v}</b></div>`;
   const empty = (t, sub = "") => `<div class="empty"><b>${esc(t)}</b>${esc(sub)}</div>`;
+  /** A radial gauge: value 0–100, the number in the middle, a caption under it. */
+  function gauge(v, label, sub = "", color = "var(--accent)") {
+    const p = clamp(Number(v) || 0, 0, 100), r = 26, L = 2 * Math.PI * r, warn = p >= 90 ? "var(--bad)" : p >= 75 ? "var(--warn)" : color;
+    return `<div class="gauge" role="img" aria-label="${esc(label)}: ${Math.round(p)}%"><svg viewBox="0 0 64 64" aria-hidden="true">
+      <circle cx="32" cy="32" r="${r}" class="g-bg"/><circle cx="32" cy="32" r="${r}" class="g-ticks"/>
+      <circle cx="32" cy="32" r="${r}" class="g-v" style="stroke:${warn};stroke-dasharray:${(L * p / 100).toFixed(1)} ${L.toFixed(1)}"/></svg>
+      <b>${v == null ? "—" : Math.round(p) + "%"}</b><span>${esc(label)}</span>${sub ? `<small>${esc(sub)}</small>` : ""}</div>`;
+  }
+  /** Seven days of a goal as a row of cells: brighter = more steps that day. */
+  function habitRow(g) {
+    const per = g.per_day || 1, log = g.log || {}, days = [];
+    for (let i = 6; i >= 0; i--) { const d = new Date(Date.now() - i * 864e5); days.push(Number(log[ymd(d)] || 0)); }
+    return `<div class="habit" aria-label="7 дней: ${days.join(", ")}">${days.map((n) => `<i style="--h:${clamp(n / per, 0, 1).toFixed(2)}" class="${n ? "on" : ""}"></i>`).join("")}</div>`;
+  }
+  const toggle = (on, act, args, label) => `<button type="button" class="tgl ${on ? "on" : ""}" role="switch" aria-checked="${on}" aria-label="${esc(label)}" data-act="${act}" data-args='${esc(JSON.stringify(args))}'><i></i></button>`;
 
   /* ---------- widgets ---------- */
   const H = () => STATE.hud || {};
@@ -172,18 +188,17 @@
     const W = (id, name, icon, size, render, extra = {}) => WIDGET_DEFS.push({ id, name, icon, size, render, ...extra });
     W("cpu", "Нагрузка ПК", "cpu", "m", () => {
       const h = H(), s = h.sys || {}, g = h.gpu;
-      return `<div class="row" style="align-items:flex-end;gap:14px"><div class="big">${num(s.cpu)}<small>%</small></div><div class="sub" style="padding-bottom:4px">процессор<br>${num(s.cores)} ядер</div></div>
-        ${sparkline(STATE.hist.cpu)}
-        ${kv("Память", `${num(s.ram_used, 1)} из ${num(s.ram_total, 1)} ГБ`)} ${bar(s.ram_pct, (s.ram_pct || 0) > 85 ? "warn" : "")}
-        ${kv("Видеокарта", g ? `${num(g.util)}% · ${num(g.temp)}°C` : "нет данных")} ${bar(g ? g.util : 0)}`;
+      return `<div class="gauges">${gauge(s.cpu, "процессор", s.cores ? `${s.cores} ядер` : "")}${gauge(s.ram_pct, "память", s.ram_total ? `${num(s.ram_used, 1)}/${num(s.ram_total, 0)} ГБ` : "", "#a78bff")}${gauge(g ? g.util : null, "видео", g ? `${num(g.temp)}°C` : "нет данных", "#37e0a0")}</div>
+        ${sparkline(STATE.hist.cpu)}`;
     });
     W("goals", "Цели", "goal", "s", () => {
       const goals = (H().goals || []).slice(0, 4);
       if (!goals.length) return empty("Целей пока нет", "Добавьте в разделе «Цели»");
       return goals.map((g) => {
         const today = Number((g.log || {})[ymd()] || 0), per = g.per_day || 1, p = clamp((today / per) * 100, 0, 100);
-        return `<div class="col"><div class="row"><span class="grow ellipsis">${esc(g.title)}</span>${btn("+1", "goal_mark", { id: g.id }, "")}</div>${bar(p, p >= 100 ? "ok" : "")}<div class="sub">${today} из ${per} сегодня</div></div>`;
-      }).join("");
+        return `<div class="goal-row"><button type="button" class="goal-tick ${p >= 100 ? "done" : ""}" data-act="goal_mark" data-args='${esc(JSON.stringify({ id: g.id }))}' aria-label="Шаг по цели: ${esc(g.title)}">${p >= 100 ? "✓" : "+1"}</button>
+          <div class="grow"><div class="row"><span class="grow ellipsis">${esc(g.title)}</span><b class="mono small">${Math.round(p)}%</b></div>${habitRow(g)}</div></div>`;
+      }).join("") + `<div class="sub" style="margin-top:2px">Матрица привычек: последние 7 дней</div>`;
     });
     W("tasks", "Дела", "task", "m", () => {
       const open = (S().tasks || []).filter((t) => !t.done).sort((a, b) => (a.due || "9").localeCompare(b.due || "9")).slice(0, 5);
@@ -229,9 +244,9 @@
     W("programs", "Программы", "apps", "m", () => {
       const list = H().programs || [];
       if (!list.length) return empty("Список программ загружается…");
-      const running = list.filter((p) => p.running).slice(0, 5), others = list.filter((p) => !p.running).slice(0, 4);
-      return `<div class="sub">Запущено: ${running.length}</div>` + (running.map((p) => `<div class="kv"><span class="ellipsis">${esc(p.name)}</span><b class="faint small">${p.memory_mb} МБ</b>${btn("Закрыть", "close", { name: p.name })}</div>`).join("") || `<div class="sub">Ничего не запущено.</div>`)
-        + `<div class="sub" style="margin-top:6px">Открыть</div><div class="pills">${others.map((p) => `<button class="chip" data-act="open" data-args='${esc(JSON.stringify({ name: p.name }))}'>${esc(p.name)}</button>`).join("")}</div>`;
+      const running = list.filter((p) => p.running).slice(0, 4), others = list.filter((p) => !p.running).slice(0, 3);
+      const row = (p) => `<div class="prog">${p.icon ? `<img src="/api/hud/icon/${encodeURIComponent(p.icon)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : `<span class="pi">${svg("apps")}</span>`}<span class="grow ellipsis">${esc(p.name)}</span><span class="faint small">${p.running ? "открыта" : "открыть"}</span>${toggle(p.running, p.running ? "prog_close" : "open", { name: p.name }, (p.running ? "Закрыть " : "Открыть ") + p.name)}</div>`;
+      return `<div class="sub">Запущено: ${running.length} из ${list.length}</div>${running.map(row).join("")}${others.map(row).join("")}`;
     });
     W("top", "Процессы", "top", "s", () => {
       const rows = (H().top || []).slice(0, 5);
@@ -275,8 +290,8 @@
     });
     W("memory", "Память", "memory", "s", () => {
       const l = H().learning || {};
-      return `<div class="big">${num(l.lessons_learned ?? 0)}<small>уроков</small></div>
-        ${kv("Повторных ошибок", num(l.repeat_mistake_rate ?? 0, 1) + "%")}${kv("Отношения", esc(H().stage?.stage || "—"))}${kv("Фактов о вас", num(STATE.facts ?? "—"))}`;
+      return `<div class="gauges two">${gauge(100 - (l.repeat_mistake_rate ?? 0), "без повторов", "ошибки не повторяет", "#37e0a0")}<div class="stat-col"><b class="big">${num(l.lessons_learned ?? 0)}</b><span class="sub">уроков из ошибок</span><b class="mono">${num(l.corrections_detected ?? 0)}</b><span class="sub">ошибок замечено</span></div></div>
+        ${kv("Отношения", esc(H().stage?.stage || "—"))}`;
     });
     W("docs", "Документы", "doc", "s", () => {
       const d = H().index || {};
@@ -339,10 +354,47 @@
     const tools = EDIT.on ? `<div class="tools" role="toolbar" aria-label="Настройка виджета">
         ${iconBtn("left", "wmove", { id: item.id, d: "left" }, "Перенести влево")}${iconBtn("up", "wmove", { id: item.id, d: "up" }, "Выше")}${iconBtn("down", "wmove", { id: item.id, d: "down" }, "Ниже")}${iconBtn("right", "wmove", { id: item.id, d: "right" }, "Перенести вправо")}
         ${iconBtn("size", "wsize", { id: item.id }, "Размер: " + (item.size || "s"))}${iconBtn("paint", "wstyle", { id: item.id }, "Вид виджета")}${iconBtn("x", "whide", { id: item.id }, "Скрыть")}</div>` : "";
+    const look = { solid: "Solid", minimal: "Minimal" }[item.style] || "Glass";
     return `<article class="w ${item.size || def.size} ${style} ${compact}" data-w="${item.id}" ${EDIT.on ? 'draggable="true"' : ""} aria-label="${esc(def.name)}">
-      <div class="w-h"><span class="ico">${svg(def.icon)}</span><span class="ttl ellipsis">${esc(def.name)}</span>${tools}</div>
+      <div class="w-h"><span class="ico">${svg(def.icon)}</span><span class="ttl ellipsis">${esc(def.name)}</span>${EDIT.on ? "" : `<button type="button" class="w-tag" data-act="wstyle" data-args='${esc(JSON.stringify({ id: item.id }))}' title="Сменить вид виджета">Style: ${look}</button>`}${tools}</div>
       <div class="w-b" data-body></div></article>`;
   }
+  /* Five ways to set the widgets around the core. Each one is a whole look, not only a colour. */
+  const SKINS = [
+    ["orbit", "Орбита", "HUD-панели с уголками вокруг глобуса"],
+    ["datav", "Командный центр", "Табло: цифры сверху, тонкие рамки, бегущая строка"],
+    ["ring", "Кольцо", "Виджеты по кругу вокруг ядра, линии к центру"],
+    ["glass", "Стекло", "Мягкие стеклянные карточки и свечение"],
+    ["terminal", "Терминал", "Окна консоли, моноширинный шрифт, развёртка"],
+  ];
+  const skin = () => (SKINS.some(([k]) => k === PREFS.skin) ? PREFS.skin : "orbit");
+  function kpiHtml() {
+    const h = H(), s = h.sys || {}, g = h.gpu || {}, tasks = (S().tasks || []).filter((t) => !t.done).length;
+    const k = (label, v, unit = "") => `<div class="kpi"><span>${label}</span><b>${v}<small>${unit}</small></b></div>`;
+    return k("Процессор", num(s.cpu), "%") + k("Память", num(s.ram_pct), "%") + k("Видео", g.util != null ? num(g.util) : "—", g.util != null ? "%" : "")
+      + k("Дела", tasks) + k("Цели", (h.goals || []).length) + k("Навыки", num(h.skills));
+  }
+  function layoutRing() {
+    const dash = $("#dash.skin-ring"); if (!dash) return;
+    const pods = $$(".w", dash), n = pods.length; if (!n) return;
+    const W = dash.clientWidth, Hh = dash.clientHeight, cx = W / 2, cy = Hh / 2;
+    const core = $("#coreWrap", dash), coreR = core ? core.clientWidth / 2 : W * 0.18;
+    const podW = pods[0].offsetWidth || 240, rx = W / 2 - podW / 2 - 8, minX = coreR + podW / 2 + 24;
+    const svgEl = $("#ringLinks"); let lines = "";
+    // two bowed columns, left and right of the core: evenly spaced, never closer to the core than its edge
+    const left = Math.ceil(n / 2), right = n - left;
+    pods.forEach((p, i) => {
+      const side = i < left ? -1 : 1, k = side < 0 ? i : i - left, cnt = side < 0 ? left : right;
+      const y = Hh * (cnt === 1 ? 0.5 : 0.12 + 0.76 * (k / (cnt - 1)));
+      const dy = (y - cy) / (Hh * 0.62);
+      const x = cx + side * Math.max(minX, rx * Math.sqrt(Math.max(0, 1 - dy * dy)));
+      p.style.left = `${x}px`; p.style.top = `${y}px`;
+      const a = Math.atan2(y - cy, x - cx);
+      lines += `<line x1="${cx + Math.cos(a) * coreR * 0.92}" y1="${cy + Math.sin(a) * coreR * 0.92}" x2="${x - side * podW / 2}" y2="${y}"/><circle cx="${x - side * podW / 2}" cy="${y}" r="3"/>`;
+    });
+    if (svgEl) { svgEl.setAttribute("viewBox", `0 0 ${W} ${Hh}`); svgEl.innerHTML = lines; }
+  }
+  addEventListener("resize", () => layoutRing());
   /* Home frame (as in the earlier HUD): top bar, core in the middle with widgets on both sides, telemetry and command dock below. */
   function telHtml() {
     const h = H(), s = h.sys || {}, g = h.gpu || {}, c = h.cloud || {};
@@ -352,44 +404,130 @@
       + chip("ВИДЕО", g.util != null ? `${num(g.util)}% · ${num(g.temp)}°C` : "—", (g.temp || 0) > 85)
       + chip("ОБЛАКО", c.enabled === false ? "выкл" : c.error ? "ошибка" : "вкл", !!c.error);
   }
-  function paintDock() { const t = $("#hxTel"); if (t) t.innerHTML = telHtml(); }
-  function renderDashboardShell() {
-    const mode = PREFS.layout.mode;
-    const center = mode === "center";
-    const list = visibleItems();
-    const l = list.filter((i) => i.col !== "r"), r = list.filter((i) => i.col === "r");
-    const cols = center
-      ? `<div class="col-w" id="colL" data-col="l">${l.map(widgetShell).join("")}</div>
-         <div class="core-wrap" id="coreWrap">
+  function paintDock() {
+    const t = $("#hxTel"); if (t) t.innerHTML = telHtml();
+    const k = $("#kpis"); if (k) k.innerHTML = kpiHtml();
+    const tk = $("#tickerIn");
+    if (tk && !tk.dataset.on) {             // the running line of the command centre: the latest commands and the state
+      tk.dataset.on = "1";
+      const items = (S().history || []).slice(-8).reverse().map((h) => `▸ ${esc((h.time || "").slice(11, 16))} ${esc(h.user || "")}`);
+      tk.innerHTML = `<span>${[telHtml(), ...items].join("<i></i>")}</span><span aria-hidden="true">${[telHtml(), ...items].join("<i></i>")}</span>`;
+    }
+  }
+  function coreHtml() {
+    return `<div class="core-wrap" id="coreWrap">
            <div class="core-disc"><canvas id="orb" role="img" aria-label="Ядро Джарвиса. Нажмите, чтобы говорить"></canvas>
              <div class="core-label"><b>ДЖАРВИС</b><span id="stateTxt">запуск</span></div></div>
-           <div class="talk" id="talk" aria-live="polite"><div class="you" id="you"></div><div id="him">Подождите, Джарвис запускается.</div></div>
+           <div class="talk" id="talk" aria-live="polite"><div class="you" id="you"></div><div id="him">${esc(STATE.lastReply || "Скажите «Джарвис» или напишите команду внизу.")}</div></div>
            <div class="feedback" id="fb"><button type="button" data-act="feedback" data-args='{"rating":1}' aria-label="Ответ верный">👍</button><button type="button" data-act="feedback" data-args='{"rating":-1}' aria-label="Ответ неверный">👎</button><span id="fbMsg"></span></div>
-         </div>
-         <div class="col-w" id="colR" data-col="r">${r.map(widgetShell).join("")}</div>`
-      : `<div class="col-w" id="colL" data-col="l" style="grid-column:1/-1">${list.map(widgetShell).join("")}</div>`;
+         </div>`;
+  }
+  function renderDashboardShell() {
+    const mode = PREFS.layout.mode;
+    const center = mode === "center", sk = skin();
+    const list = visibleItems();
+    const l = list.filter((i) => i.col !== "r"), r = list.filter((i) => i.col === "r");
+    let cols;
+    if (mode === "robot" && window.Robot) cols = window.Robot.html();
+    else if (center && sk === "ring") cols = `<svg class="ring-links" id="ringLinks" aria-hidden="true"></svg>${coreHtml()}${list.slice(0, 8).map(widgetShell).join("")}`;
+    else if (center) cols = `<div class="col-w" id="colL" data-col="l">${l.map(widgetShell).join("")}</div>${coreHtml()}<div class="col-w" id="colR" data-col="r">${r.map(widgetShell).join("")}</div>`;
+    else if (mode === "focus") cols = coreHtml();          // only the core, large, in the middle
+    else cols = `<div class="col-w" id="colL" data-col="l" style="grid-column:1/-1">${list.map(widgetShell).join("")}</div>`;
+    const hudLike = center || mode === "robot" || mode === "focus";
+    const modes = [["center", "Виджеты"], ["robot", "Робот"], ["grid", "Сетка"]];
     const toolbar = `<div class="dash-toolbar">
-        ${center ? `<div class="hx-brand"><span class="hx-dot" aria-hidden="true"></span>JARVIS PRIME OS <small>Windows 11</small></div>` : ""}
-        <div class="seg" role="group" aria-label="Вид главной"><button type="button" data-act="mode" data-args='{"m":"center"}' aria-pressed="${mode === "center"}">Ядро и виджеты</button><button type="button" data-act="mode" data-args='{"m":"grid"}' aria-pressed="${mode === "grid"}">Сетка</button><button type="button" data-act="mode" data-args='{"m":"focus"}' aria-pressed="${mode === "focus"}">Только ядро</button></div>
+        ${hudLike ? `<div class="hud-title"><b>JARVIS PRIME OS <span>v3.3</span></b><small>Windows 11 · голосовой ассистент</small></div>` : ""}
         <span class="spacer"></span>
-        <button class="btn ${EDIT.on ? "primary" : ""}" data-act="edit" aria-pressed="${EDIT.on}">${svg("move")} ${EDIT.on ? "Готово" : "Настроить виджеты"}</button>
-        <button class="btn" data-act="addwidget">${svg("plus")} Добавить виджет</button>
-        ${center ? `<button class="btn" data-act="resetlayout">Сбросить порядок</button>` : ""}
+        ${center ? `<div class="seg skins" role="group" aria-label="Вид виджетов">${SKINS.map(([k, n, d]) => `<button type="button" data-act="skin" data-args='{"k":"${k}"}' aria-pressed="${sk === k}" title="${esc(d)}">${n}</button>`).join("")}</div>` : ""}
+        <div class="seg" role="group" aria-label="Режим главной">${modes.map(([k, n]) => `<button type="button" data-act="mode" data-args='{"m":"${k}"}' aria-pressed="${mode === k}">${n}</button>`).join("")}</div>
+        <button class="btn sm primary" data-act="studio" data-args='{"tab":"look"}'>${svg("paint")} Персонализация</button>
+        ${mode === "robot" || mode === "focus" ? "" : `<button class="btn sm ${EDIT.on ? "primary" : ""}" data-act="edit" aria-pressed="${EDIT.on}" title="Переставлять виджеты прямо на главной">${svg("move")} ${EDIT.on ? "Готово" : "Переставить"}</button>`}
+        ${center && EDIT.on ? `<button class="btn sm ghost" data-act="resetlayout" title="Сбросить порядок виджетов">Сброс</button>` : ""}
       </div>`;
-    const dock = center ? `<footer class="hx-dock" aria-label="Телеметрия и команды">
+    const kpi = center && sk === "datav" ? `<div class="kpis" id="kpis">${kpiHtml()}</div>` : "";
+    const dock = hudLike ? `<footer class="hx-dock" aria-label="Телеметрия и команды">
         <div class="hx-tel" id="hxTel"></div>
-        <form class="form-row hx-cmd" id="askForm" role="search"><div class="field grow"><input id="askIn" type="text" placeholder="Напишите команду или скажите «Джарвис»" aria-label="Команда для Джарвиса" autocomplete="off"></div><button class="btn primary" type="submit">Отправить</button><button class="btn icon" type="button" id="btnMic" aria-label="Говорить">${svg("mic")}</button></form>
-        <button class="btn" data-act="show_open">${svg("show")} Презентация</button>
+        <form class="form-row hx-cmd" id="askForm" role="search"><div class="field grow"><input id="askIn" type="text" placeholder="Запрос к Джарвису или команда…" aria-label="Команда для Джарвиса" autocomplete="off"></div><button class="btn icon" type="button" id="btnMic" aria-label="Говорить">${svg("mic")}</button><button class="btn primary" type="submit">Отправить</button></form>
+        <button class="btn stage-btn" data-act="show_open">${svg("show")} STAGE / ПРЕЗЕНТАЦИЯ</button>
       </footer>` : "";
-    $("#view").innerHTML = `<div class="${EDIT.on ? "edit " : ""}">${toolbar}<div class="dash mode-${mode}" id="dash">${cols}</div>${dock}</div>`;
+    const ticker = center && sk === "datav" ? `<div class="ticker" aria-hidden="true"><div id="tickerIn"></div></div>` : "";
+    if (mode !== "robot" && window.Robot) window.Robot.unmount();
+    document.body.classList.toggle("home-hud", hudLike);
+    $("#view").innerHTML = `<div class="hud skin-${center ? sk : mode} ${EDIT.on ? "edit" : ""}">${toolbar}${kpi}<div class="dash mode-${mode} ${center ? "skin-" + sk : ""}" id="dash">${cols}</div>${dock}${ticker}</div>`;
     $("#view").dataset.page = "home";
-    if (center) mountCore();
+    if (center || mode === "focus") mountCore();
+    if (mode === "robot" && window.Robot) window.Robot.mount();
     bindWidgetDnd();
+    paintWidgets(true);
+    requestAnimationFrame(layoutRing);
+  }
+  /* ---------- Персонализация: like a phone's widget gallery. Every change shows at once. ---------- */
+  const STUDIO = { filter: "all" };
+  const LAYOUTS = [
+    ["center", "orbit", "Орбита", "HUD-панели с уголками вокруг ядра"], ["center", "datav", "Командный центр", "Табло цифр, тонкие рамки, бегущая строка"],
+    ["center", "ring", "Кольцо", "Виджеты по дуге вокруг ядра"], ["center", "glass", "Стекло", "Мягкие стеклянные карточки"],
+    ["center", "terminal", "Терминал", "Окна консоли и развёртка"], ["robot", "", "Робот", "Робот с эмоциями и вашим настроением"],
+    ["grid", "", "Сетка", "Только виджеты, плотной сеткой"], ["focus", "", "Только ядро", "Большое ядро без виджетов"],
+  ];
+  const SHAPES = [["auto", "Как у цвета"], ["rings", "Кольца"], ["dots", "Точки"], ["grid", "Сетка"], ["shield", "Щит"], ["orbits", "Орбиты"], ["none", "Без фигуры"]];
+  const WGROUPS = { "Компьютер": ["cpu", "programs", "top", "net", "battery", "sound", "display", "services", "lan", "logs"],
+    "Дела и время": ["tasks", "goals", "focus", "calendar", "clock", "macros", "history"], "Связь и дом": ["messengers", "tv", "weather"],
+    "Джарвис": ["brain", "memory", "docs", "shield", "show"] };
+  function thumb(mode, k) {
+    const panel = (n) => Array.from({ length: n }, () => "<i></i>").join("");
+    if (mode === "robot") return `<div class="th th-robot"><b></b></div>`;
+    if (mode === "focus") return `<div class="th th-focus"><b></b></div>`;
+    if (mode === "grid") return `<div class="th th-grid">${panel(6)}</div>`;
+    if (k === "ring") return `<div class="th th-ring"><b></b>${panel(6)}</div>`;
+    return `<div class="th th-cols th-${k}"><span>${panel(3)}</span><b></b><span>${panel(3)}</span></div>`;
+  }
+  function renderStudio(tab = "look") {
+    STUDIO.tab = tab;
+    document.body.classList.add("home-hud");
+    if (window.Robot) window.Robot.unmount();
+    const mode = PREFS.layout.mode, sk = skin(), shape = PREFS.shape || "auto";
+    const tabs = [["look", "Вид главной"], ["core", "Ядро и цвет"], ["widgets", "Виджеты"]];
+    let main = "";
+    if (tab === "look") {
+      main = `<p class="sub">Выберите, как будет выглядеть главная. Можно менять в любой момент.</p><div class="layouts">${LAYOUTS.map(([m, k, n, d]) => {
+        const on = mode === m && (!k || sk === k);
+        return `<button type="button" class="lay-card" data-act="st_layout" data-args='${esc(JSON.stringify({ mode: m, skin: k }))}' aria-pressed="${on}">${thumb(m, k)}<b>${esc(n)}</b><span>${esc(d)}</span></button>`;
+      }).join("")}</div>`;
+    } else if (tab === "core") {
+      main = `<h3>Ядро</h3><div class="opts">${[["globe", "Точечный глобус", "Земля из светящихся точек"], ["sphere", "Стеклянная сфера", "Сфера с волной голоса"]].map(([k, n, d]) => `<button type="button" class="opt-card" data-act="st_core" data-args='{"core":"${k}"}' aria-pressed="${(PREFS.core || "globe") === k}"><b>${n}</b><span>${d}</span></button>`).join("")}</div>
+        <h3>Фигура вокруг ядра</h3><div class="chips">${SHAPES.map(([k, n]) => `<button type="button" class="chip-btn" data-act="st_shape" data-args='{"shape":"${k}"}' aria-pressed="${shape === k}">${n}</button>`).join("")}</div>
+        <h3>Цвет</h3><div class="swatch-row">${PALETTES.map((p) => `<button type="button" class="sw" data-act="st_palette" data-args='{"id":"${p.id}"}' aria-pressed="${PREFS.palette === p.id}" style="--c:${p.a}"><i></i><span>${esc(p.name)}</span></button>`).join("")}</div>
+        <p class="sub">Ядро слева показывает выбор сразу. Тонкая настройка (стиль карточек, плотность, анимация) — в разделе «Внешний вид».</p>`;
+    } else {
+      const items = layoutItems(), f = STUDIO.filter;
+      const card = (id) => {
+        const def = widgetDef(id), it = itemOf(id); if (!def || !it) return "";
+        const on = it.on !== false;
+        if ((f === "on" && !on) || (f === "off" && on)) return "";
+        const seg = (act, key, opts) => `<div class="mini-seg">${opts.map(([v, n]) => `<button type="button" data-act="${act}" data-args='${esc(JSON.stringify({ id, [key]: v }))}' aria-pressed="${(it[key] || (key === "size" ? def.size : "l")) === v}">${n}</button>`).join("")}</div>`;
+        return `<div class="wcard ${on ? "on" : ""}"><div class="wprev">${widgetShell({ ...it, style: it.style })}</div>
+          <div class="wctl"><label class="row grow"><b class="ellipsis">${esc(def.name)}</b></label>${toggle(on, "st_on", { id }, (on ? "Убрать с главной: " : "Показать на главной: ") + def.name)}</div>
+          ${on ? `<div class="wctl small">${seg("st_size", "size", [["s", "S"], ["m", "M"], ["l", "L"]])}${seg("st_side", "col", [["l", "Слева"], ["r", "Справа"]])}</div>` : ""}</div>`;
+      };
+      const shown = items.filter((i) => i.on !== false).length;
+      main = `<div class="row wrap" style="gap:8px"><div class="seg">${[["all", "Все"], ["on", `На главной · ${shown}`], ["off", "Скрытые"]].map(([k, n]) => `<button type="button" data-act="st_filter" data-args='{"f":"${k}"}' aria-pressed="${f === k}">${n}</button>`).join("")}</div><span class="sub">Включите переключателем — виджет сразу появится на главной.</span></div>
+        ${Object.entries(WGROUPS).map(([g, ids]) => { const cards = ids.map(card).join(""); return cards ? `<h3>${g}</h3><div class="gallery">${cards}</div>` : ""; }).join("")}`;
+    }
+    $("#view").innerHTML = `<div class="studio" id="studio">
+        <header class="studio-head"><div><h2>Персонализация</h2><p class="sub">Всё меняется сразу. Нажмите «Готово», чтобы вернуться на главную.</p></div>
+          <div class="seg" role="tablist">${tabs.map(([k, n]) => `<button type="button" role="tab" data-act="st_tab" data-args='{"tab":"${k}"}' aria-pressed="${tab === k}">${n}</button>`).join("")}</div>
+          <button class="btn primary" data-act="studio_done">Готово</button></header>
+        <div class="studio-body"><aside class="studio-preview"><div class="core-disc"><canvas id="orb" role="img" aria-label="Так будет выглядеть ядро"></canvas>
+            <div class="core-label"><b>ДЖАРВИС</b><span id="stateTxt">предпросмотр</span></div></div>
+            <div class="sub" style="text-align:center">${esc((LAYOUTS.find(([m, k]) => m === mode && (!k || k === sk)) || [, , "—"])[2])} · ${esc(palette(PREFS.palette).name)}</div></aside>
+          <section class="studio-main">${main}</section></div></div>`;
+    $("#view").dataset.page = "home";
+    mountCore();
     paintWidgets(true);
   }
   function paintWidgets(force) {
     paintDock();
-    $$("#dash .w[data-w]").forEach((el) => {
+    $$("#dash .w[data-w], #studio .w[data-w]").forEach((el) => {
       const item = itemOf(el.dataset.w), def = widgetDef(el.dataset.w);
       if (!item || !def) return;
       const body = el.querySelector("[data-body]");
@@ -446,7 +584,7 @@
     const mic = $("#btnMic"); if (mic) mic.setAttribute("aria-pressed", String(STATUS === "recording"));
   }
   let STATUS = "starting";
-  function setStatus(s) { if (!s) return; STATUS = s; JarvisCore && JarvisCore.set({ status: s }); coreState(); pillLink(); }
+  function setStatus(s) { if (!s) return; STATUS = s; JarvisCore && JarvisCore.set({ status: s }); if (window.Robot) Robot.setStatus(s); coreState(); pillLink(); }
   function pillLink() {
     const c = STATE.hud?.cloud || {};
     const cp = $("#pillCloud"); if (cp) { cp.className = "status-pill " + (c.enabled === false ? "" : c.error ? "bad" : "on"); cp.querySelector("span").textContent = c.error ? "Облако: ошибка" : c.enabled === false ? "Без интернета" : "Облако подключено"; }
@@ -481,7 +619,7 @@
     try { ws = new WebSocket(`ws://${location.host}/ws`); } catch { return; }
     ws.onmessage = (e) => {
       let ev; try { ev = JSON.parse(e.data); } catch { return; }
-      if (ev.type === "level") { JarvisCore && JarvisCore.set({ level: Math.min(1, ev.v / 1400) }); if (ev.s && ev.s !== STATUS) setStatus(ev.s); }
+      if (ev.type === "level") { JarvisCore && JarvisCore.set({ level: Math.min(1, ev.v / 1400) }); if (window.Robot) Robot.setLevel(Math.min(1, ev.v / 1400)); if (ev.s && ev.s !== STATUS) setStatus(ev.s); }
       else if (ev.type === "status") setStatus(ev.state);
       else if (ev.type === "message") { addExchange(ev); }
       else if (ev.type === "heard" && !ev.ok) { const y = $("#you"); if (y) y.textContent = "Не разобрал: " + ev.text; }
@@ -497,7 +635,7 @@
   }
   function addExchange(ev) {
     if (ev.role === "user") { const y = $("#you"); if (y) y.textContent = "Вы: " + ev.text; }
-    else { const h = $("#him"); if (h) h.textContent = ev.text; }
+    else { STATE.lastReply = ev.text; const h = $("#him"); if (h) h.textContent = ev.text; if (window.Robot) window.Robot.onReply(ev.text); }
     if (STATE.live === "commands" && window.PAGES?.commands?.onData) PAGES.commands.onData(null, true);
     pollSlow();
   }
@@ -523,6 +661,10 @@
     async brightness(args) { await hudAct("brightness", { level: args.level }); },
     async open({ name }) { await hudAct("open", { name }); toast("Открываю " + name); setTimeout(pollHud, 1500); },
     async close({ name }) { await hudAct("close", { name }); toast("Закрываю " + name); setTimeout(pollHud, 1500); },
+    async prog_close({ name }) {
+      if (!(await ask({ title: `Закрыть ${name}?`, text: "Несохранённая работа в этой программе может пропасть.", yes: "Закрыть", danger: true }))) { paintWidgets(true); return; }
+      await ACT.close({ name });
+    },
     async kill({ pid, name }) {
       const ok = await ask({ title: `Завершить ${name}?`, text: "Несохранённая работа в этой программе пропадёт.", yes: "Завершить", danger: true });
       if (ok) { await hudAct("kill", { pid, name }); pollHud(); }
@@ -546,10 +688,22 @@
     async wmove({ id, d }) { moveWidget(id, d); },
     wsize({ id }) { const it = itemOf(id); const i = SIZES.indexOf(it.size || "s"); it.size = SIZES[(i + 1) % 3]; savePrefs(); renderDashboardShell(); },
     wstyle({ id }) { const it = itemOf(id); const order = [undefined, "solid", "minimal"]; it.style = order[(order.indexOf(it.style) + 1) % 3]; savePrefs(); renderDashboardShell(); },
-    whide({ id }) { itemOf(id).on = false; savePrefs(); renderDashboardShell(); toast("Скрыл. Вернуть: «Настроить виджеты» → «Добавить»"); },
+    whide({ id }) { itemOf(id).on = false; savePrefs(); renderDashboardShell(); toast("Скрыл. Вернуть: «Персонализация» → «Виджеты»"); },
     edit() { EDIT.on = !EDIT.on; renderDashboardShell(); },
     mode({ m }) { PREFS.layout.mode = m; savePrefs(); renderDashboardShell(); },
-    addwidget() { openAddWidget(); },
+    skin({ k }) { PREFS.skin = k; if (PREFS.layout.mode !== "center") PREFS.layout.mode = "center"; savePrefs(); renderDashboardShell(); },
+    addwidget() { renderStudio("widgets"); },
+    studio({ tab = "look" } = {}) { EDIT.on = false; renderStudio(tab); },
+    studio_done() { renderDashboardShell(); },
+    st_tab({ tab }) { renderStudio(tab); },
+    st_layout({ mode, skin: k }) { PREFS.layout.mode = mode; if (k) PREFS.skin = k; savePrefs(); renderStudio("look"); },
+    st_core({ core }) { PREFS.core = core; savePrefs(); applyLook(); renderStudio("core"); },
+    st_shape({ shape }) { PREFS.shape = shape; savePrefs(); applyLook(); renderStudio("core"); },
+    st_palette({ id }) { PREFS.palette = id; savePrefs(); applyLook(); renderStudio("core"); },
+    st_filter({ f }) { STUDIO.filter = f; renderStudio("widgets"); },
+    st_on({ id }) { const it = itemOf(id); if (!it) return; it.on = it.on === false; if (it.on) it.col = it.col || "r"; savePrefs(); renderStudio("widgets"); },
+    st_size({ id, size }) { const it = itemOf(id); if (it) { it.size = size; savePrefs(); renderStudio("widgets"); } },
+    st_side({ id, col }) { const it = itemOf(id); if (it) { it.col = col; savePrefs(); renderStudio("widgets"); } },
   };
   async function hudAct(kind, body) {
     try {
@@ -569,21 +723,7 @@
     }
     savePrefs(); renderDashboardShell();
   }
-  function openAddWidget() {
-    const hidden = layoutItems().filter((i) => i.on === false);
-    const list = WIDGET_DEFS.map((w) => {
-      const it = itemOf(w.id), on = it && it.on !== false;
-      return `<label class="item"><span class="ico" style="width:26px;height:26px;border-radius:8px;background:rgba(var(--accent-rgb),.12);color:var(--accent);display:grid;place-items:center">${svg(w.icon)}</span><span class="grow"><b style="font-weight:550">${esc(w.name)}</b></span><label class="switch"><input type="checkbox" data-addw="${w.id}" ${on ? "checked" : ""} aria-label="${esc(w.name)}"><span></span></label></label>`;
-    }).join("");
-    const d = dialog(`<p>Включайте и выключайте виджеты. Порядок и место меняются кнопками на самих виджетах.</p><div class="list" id="addList">${list}</div>`, "Виджеты");
-    d.addEventListener("change", (e) => {
-      const t = e.target; if (!t.dataset.addw) return;
-      const it = itemOf(t.dataset.addw); if (!it) return;
-      it.on = t.checked; if (t.checked) it.col = it.col || "r";
-      savePrefs(); renderDashboardShell();
-    });
-    void hidden;
-  }
+
 
   /* ---------- widgets: range inputs and forms ---------- */
   document.addEventListener("input", (e) => {
@@ -647,10 +787,12 @@
     const view = $("#view");
     if (page === "home" || !window.PAGES || !PAGES[page]) {
       STATE.live = "home";
-      setHeader("Главная", "Ядро и ваши виджеты. Настройте любой виджет кнопкой «Настроить виджеты».", "");
+      setHeader("Главная", "Ядро и ваши виджеты. Вид меняется кнопкой «Персонализация».", "");
       view.innerHTML = ""; renderDashboardShell(); return;
     }
     const p = PAGES[page];
+    document.body.classList.remove("home-hud");
+    if (window.Robot) window.Robot.unmount();
     view.innerHTML = "";
     setHeader(p.title, p.sub || "", "");
     try { p.render(view, sub); } catch (err) { view.innerHTML = `<div class="callout bad"><div><b>Не открылся раздел</b>${esc(err.message)}</div></div>`; }
@@ -667,8 +809,9 @@
     { label: "Самопрезентация с голосом", go: () => ACT.show_start({ deck: "about", auto: true }) },
     { label: "Отчёт за месяц на весь экран", go: () => ACT.show_start({ deck: "report" }) },
     { label: "Проанализировать ноутбук", go: () => openAnalysis && openAnalysis() },
-    { label: "Настроить виджеты", go: () => { location.hash = "#/"; setTimeout(() => ACT.edit(), 50); } },
-    { label: "Добавить виджет", go: () => { location.hash = "#/"; setTimeout(openAddWidget, 60); } },
+    { label: "Переставить виджеты на главной", go: () => { location.hash = "#/"; setTimeout(() => ACT.edit(), 50); } },
+    { label: "Персонализация: вид главной, ядро, цвет", go: () => { location.hash = "#/"; setTimeout(() => renderStudio("look"), 60); } },
+    { label: "Добавить или убрать виджеты", go: () => { location.hash = "#/"; setTimeout(() => renderStudio("widgets"), 60); } },
     { label: "Настроить голос", go: () => (location.hash = "#/settings/voice") },
     { label: "Подключить WhatsApp / Telegram / почту", go: () => (location.hash = "#/settings/messengers") },
   ];
@@ -730,7 +873,7 @@
       clearInterval(SL.timer); SL.timer = 0; SL.key = "";
       return;
     }
-    if (stage.hidden) { stage.hidden = false; }
+    if (stage.hidden) { stage.hidden = false; SL.content = ""; if (stage.querySelector(".stage-bg")) stageBg(); }
     if (!SL.timer) SL.timer = setInterval(() => { if (!document.hidden) syncShow(); }, 800);
     const key = `${st.deck}|${st.lang}|${st.i}|${st.auto}|${st.total}`;
     if (key !== SL.key) { SL.key = key; drawStage(); }
@@ -742,23 +885,80 @@
     const st = $("#stage");
     if (!st.hidden && st.requestFullscreen && !document.fullscreenElement) st.requestFullscreen().catch(() => {});
   }
+  /* One layout per kind of slide: the talk is not a wall of text, each idea has its own picture. */
+  function slideBody(x, lang) {
+    const chips = (a) => (a || []).length ? `<ul class="pts">${a.map((p, i) => `<li style="--d:${i}">${esc(p)}</li>`).join("")}</ul>` : "";
+    const head = `<div class="kick">${esc(x.kicker || x.title || "")}</div><h2 class="bg">${esc(x.big || "")}</h2>`;
+    const cards = (a) => `<div class="cards">${(a || []).map((c, i) => `<div class="card" style="--d:${i}"><span class="ci">${svg(c.i || "star")}</span><b>${esc(c.t)}</b><span>${esc(c.d)}</span></div>`).join("")}</div>`;
+    const stats = (a) => `<div class="stats">${(a || []).map((c, i) => `<div class="statx" style="--d:${i}"><b data-count="${Number(c.v) || 0}">0</b><span>${esc(c.l)}</span></div>`).join("")}</div>`;
+    switch (x.kind) {
+      case "title": return `<div class="lay title"><div class="kick">${esc(x.kicker || "")}</div><h2 class="hero">${esc(x.big)}</h2><p class="lead">${esc(x.sub || "")}</p>${chips(x.points)}</div>`;
+      case "problem": return `<div class="lay">${head}<div class="tiles">${(x.points || []).map((p, i) => `<div class="tile" style="--d:${i}"><i>${String(i + 1).padStart(2, "0")}</i>${esc(p)}<small>${lang === "ja" ? "数秒" : lang === "en" ? "seconds" : "секунды"}</small></div>`).join("")}</div><div class="sum">${lang === "ja" ? "＝ 毎日、何時間も" : lang === "en" ? "= hours, every day" : "= часы каждый день"}</div></div>`;
+      case "quote": return `<div class="lay">${head}<div class="quote"><span class="mic">${svg("mic")}</span>${esc(x.sub || "")}<span class="wave"><i></i><i></i><i></i><i></i><i></i></span></div></div>`;
+      case "features": case "emotions": return `<div class="lay">${head}${cards(x.items)}</div>`;
+      case "pipeline": return `<div class="lay">${head}<div class="pipe">${(x.steps || []).map((p, i) => `<div class="node" style="--d:${i}"><b>${i + 1}</b><span>${esc(p)}</span><small>${esc((x.points || [])[i] || "")}</small></div>`).join(`<i class="arrow"></i>`)}</div></div>`;
+      case "cycle": { const n = (x.cycle || []).length || 1; return `<div class="lay two">${head.replace("<h2", "<h2 data-split")}<div class="cycle-wrap"><div class="cycle">${(x.cycle || []).map((p, i) => `<div class="cnode" style="--a:${(i / n) * 360 - 90}deg;--d:${i}"><span>${esc(p)}</span></div>`).join("")}<div class="cspin"></div></div>${stats(x.stats)}</div></div>`; }
+      case "security": return `<div class="lay">${head}<ul class="checks">${(x.points || []).map((p, i) => `<li style="--d:${i}"><span>${svg("shield")}</span>${esc(p)}</li>`).join("")}</ul></div>`;
+      case "layers": return `<div class="lay">${head}<div class="layers">${(x.layers || []).map((p, i) => { const [a, b] = String(p).split(/\s·\s|・/); return `<div class="layer" style="--d:${i}"><b>${esc(a)}</b><span>${esc(b || "")}</span></div>`; }).join("")}</div></div>`;
+      case "stats": return `<div class="lay">${head}${stats(x.stats)}</div>`;
+      case "demo": return `<div class="lay">${head}<div class="phrases">${(x.phrases || []).map((p, i) => `<div class="phrase" style="--d:${i}"><span class="mic">${svg("mic")}</span>${esc(p)}</div>`).join("")}</div></div>`;
+      case "end": return `<div class="lay title end"><div class="kick">${esc(x.kicker || "")}</div><h2 class="hero">${esc(x.big)}</h2><p class="lead">${esc(x.sub || "")}</p></div>`;
+      default: return `<div class="lay">${head}${chips(x.points)}</div>`;      // the monthly report
+    }
+  }
   function drawStage() {
     const st = $("#stage"), s = SL.st || {}, x = s.slide || {}, slides = s.slides || [];
-    const points = (x.points || []).length ? `<ul class="pts">${x.points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : "";
     st.lang = s.lang === "ja" ? "ja" : s.lang === "en" ? "en" : "ru";
-    st.innerHTML = `<header>
+    if (!st.querySelector(".stage-bg")) {
+      st.innerHTML = `<canvas class="stage-bg" aria-hidden="true"></canvas><div class="stage-bar"><i></i></div><header></header><div class="body"></div><div class="caption" aria-live="polite"></div><footer></footer>`;
+      stageBg();
+    }
+    st.querySelector("header").innerHTML = `
         <div class="seg" role="group" aria-label="Презентация"><button type="button" data-deck="about" aria-pressed="${s.deck === "about"}">О Джарвисе</button><button type="button" data-deck="report" aria-pressed="${s.deck === "report"}">Отчёт за месяц</button></div>
         <div class="seg" role="group" aria-label="Язык">${[["ru", "RU"], ["en", "EN"], ["ja", "JA"]].map(([k, n]) => `<button type="button" data-sl="${k}" aria-pressed="${s.lang === k}">${n}</button>`).join("")}</div>
-        <span class="grow"></span>
+        <span class="grow"></span><span class="brand-mini">JARVIS · ${(s.i || 0) + 1}/${s.total || 0}</span>
         <button class="btn" data-stage="audio" title="Сохранить всю презентацию одним MP3-файлом">Аудиофайл</button>
-        <button class="btn" data-stage="close">Выйти</button></header>
-      <div class="body"><div class="ti">${esc(x.title || "")}</div><div class="bg">${esc(x.big || "")}</div>${points}<div class="su">${esc(x.say || "")}</div></div>
-      <footer><button class="btn" data-stage="prev" ${s.i <= 0 ? "disabled" : ""}>Назад</button>
-        <div class="dots" style="flex:1" role="group" aria-label="Слайды">${slides.map((sl, i) => `<button type="button" class="${i <= s.i ? "on" : ""}" data-go="${i}" aria-label="Слайд ${i + 1}: ${esc(sl.title || "")}"></button>`).join("")}</div>
-        <span class="faint small mono">${(s.i || 0) + 1} / ${s.total || 0}</span>
+        <button class="btn" data-stage="close">Выйти</button>`;
+    const contentKey = `${s.deck}|${s.lang}|${s.i}`;
+    if (SL.content !== contentKey) {
+      SL.content = contentKey; SL.slideAt = performance.now();
+      const body = st.querySelector(".body");
+      body.className = `body k-${x.kind || "plain"}`;
+      body.innerHTML = slideBody(x, s.lang);
+      body.querySelectorAll("[data-count]").forEach(countUp);
+      const words = String(x.say || "").split(s.lang === "ja" ? /(?<=[、。！？])/ : /\s+/).filter(Boolean);
+      st.querySelector(".caption").innerHTML = words.map((w) => `<span>${esc(w)}</span>`).join(s.lang === "ja" ? "" : " ");
+      SL.words = words.length; SL.est = Math.max(3, String(x.say || "").length * (s.lang === "ja" ? 0.16 : 0.062));
+      st.querySelector(".stage-bar i").style.width = `${((s.i || 0) + 1) / (s.total || 1) * 100}%`;
+    }
+    st.classList.toggle("auto", !!s.auto);
+    st.querySelector("footer").innerHTML = `<button class="btn" data-stage="prev" ${s.i <= 0 ? "disabled" : ""}>Назад</button>
+        <div class="dots" style="flex:1" role="group" aria-label="Слайды">${slides.map((sl, i) => `<button type="button" class="${i <= s.i ? "on" : ""}" data-go="${i}" aria-label="Слайд ${i + 1}: ${esc(sl.kicker || sl.title || "")}"></button>`).join("")}</div>
         <button class="btn" data-stage="say">Сказать вслух</button>
         <button class="btn ${s.auto ? "" : "primary"}" data-stage="auto" aria-pressed="${!!s.auto}">${s.auto ? "Пауза" : "Автопоказ с голосом"}</button>
-        <button class="btn primary" data-stage="next" ${s.i >= (s.total || 1) - 1 ? "disabled" : ""}>Дальше</button></footer>`;
+        <button class="btn primary" data-stage="next" ${s.i >= (s.total || 1) - 1 ? "disabled" : ""}>Дальше</button>`;
+  }
+  function countUp(el) {
+    const to = Number(el.dataset.count) || 0, t0 = performance.now(), dur = 1300;
+    const step = (t) => { const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3); el.textContent = Math.round(to * e).toLocaleString("ru-RU"); if (k < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  }
+  /* The background: the dotted Earth turning slowly, and the spoken words lighting up as they are said. */
+  function stageBg() {
+    const loop = (t) => {
+      const st = $("#stage"); if (!st || st.hidden) { SL.bgRaf = 0; return; }
+      SL.bgRaf = requestAnimationFrame(loop);
+      const c = st.querySelector(".stage-bg"); if (!c) return;
+      const w = Math.round(c.clientWidth * Math.min(1.5, devicePixelRatio || 1)), h = Math.round(c.clientHeight * Math.min(1.5, devicePixelRatio || 1));
+      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+      if (t - (SL.bgT || 0) > 40 && window.JarvisCore?.earth) { SL.bgT = t; JarvisCore.earth(c, t, palette(PREFS.palette).rgb); }
+      if (SL.st?.auto && SL.words) {
+        const k = Math.min(1, (performance.now() - SL.slideAt) / 1000 / SL.est), n = Math.floor(k * SL.words);
+        const spans = st.querySelectorAll(".caption span");
+        spans.forEach((sp, i) => sp.classList.toggle("on", i < n));
+      }
+    };
+    if (!SL.bgRaf) SL.bgRaf = requestAnimationFrame(loop);
   }
   function closeStage() { showOp("stop"); }
   $("#stage").addEventListener("click", async (e) => {

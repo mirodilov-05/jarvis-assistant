@@ -11,7 +11,84 @@
     return [r * Math.cos(th), y, r * Math.sin(th)];
   });
   const st = { canvas: null, g: null, status: "starting", level: 0, sys: null, gpu: null, cloud: {}, lite: false,
-    game: false, shape: "rings", rgb: "0,245,255", lv: 0, last: 0, visible: true };
+    game: false, shape: "rings", rgb: "0,245,255", lv: 0, last: 0, visible: true, core: "globe" };
+
+  /* ---------- the dotted Earth: points on a sphere, lit where there is land (web/land.js, Natural Earth) ---------- */
+  const EARTH = { pts: null, pings: [] };
+  function buildEarth() {
+    const L = window.JARVIS_LAND; if (!L) return null;
+    const raw = atob(L.b64), bits = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bits[i] = raw.charCodeAt(i);
+    const land = (lat, lon) => {
+      const row = Math.min(L.h - 1, Math.max(0, Math.floor((90 - lat) / 180 * L.h)));
+      const col = ((Math.floor((lon + 180) / 360 * L.w) % L.w) + L.w) % L.w, k = row * L.w + col;
+      return (bits[k >> 3] >> (k & 7)) & 1;
+    };
+    const n = 9000, xs = [], ys = [], zs = [], kind = [];
+    for (let i = 0; i < n; i++) {
+      const y = 1 - (2 * (i + 0.5)) / n, r = Math.sqrt(1 - y * y), th = i * 2.399963229728653;
+      const x = r * Math.cos(th), z = r * Math.sin(th);
+      const lat = Math.asin(y) * 180 / Math.PI, lon = Math.atan2(z, x) * 180 / Math.PI;
+      if (land(lat, lon)) {
+        const coast = !land(lat + 1.6, lon) || !land(lat - 1.6, lon) || !land(lat, lon + 1.6) || !land(lat, lon - 1.6);
+        xs.push(x); ys.push(y); zs.push(z); kind.push(coast ? 2 : 1);
+      } else if (i % 7 === 0) { xs.push(x); ys.push(y); zs.push(z); kind.push(0); }
+    }
+    const land1 = kind.map((k, i) => (k ? i : -1)).filter((i) => i >= 0);
+    EARTH.pings = Array.from({ length: 7 }, (_, j) => ({ i: land1[(j * 977 + 131) % land1.length], ph: j * 0.9 }));
+    return { x: Float32Array.from(xs), y: Float32Array.from(ys), z: Float32Array.from(zs), k: Uint8Array.from(kind) };
+  }
+
+  function drawEarth(g, c, Rs, s, A, LV) {
+    if (!EARTH.pts) EARTH.pts = buildEarth();
+    const P = EARTH.pts;
+    const sphere = g.createRadialGradient(c - Rs * 0.25, c - Rs * 0.3, Rs * 0.1, c, c, Rs);    // the dark body
+    sphere.addColorStop(0, "rgba(6,14,22,0.96)"); sphere.addColorStop(1, "rgba(1,3,6,0.98)");
+    g.fillStyle = sphere; g.beginPath(); g.arc(c, c, Rs, 0, 7); g.fill();
+    const atm = g.createRadialGradient(c, c, Rs * 0.86, c, c, Rs * 1.14);                      // atmosphere on the rim
+    atm.addColorStop(0, `rgba(${A},0)`); atm.addColorStop(0.45, `rgba(${A},${0.28 + LV * 0.3})`); atm.addColorStop(1, `rgba(${A},0)`);
+    g.fillStyle = atm; g.beginPath(); g.arc(c, c, Rs * 1.14, 0, 7); g.fill();
+    if (!P) return;
+    const rot = s * 0.11, ca = Math.cos(rot), sa = Math.sin(rot), tilt = 0.38, ct = Math.cos(tilt), sn = Math.sin(tilt);
+    const buckets = [[], [], [], [], [], []];
+    const size = Math.max(1, Rs * 0.0105);
+    for (let i = 0; i < P.k.length; i++) {
+      const x1 = P.x[i] * ca + P.z[i] * sa, z1 = -P.x[i] * sa + P.z[i] * ca;
+      const y2 = P.y[i] * ct - z1 * sn, z2 = P.y[i] * sn + z1 * ct;
+      const k = P.k[i];
+      let b;
+      if (z2 < 0) { if (k === 0) continue; b = 0; }                       // the far side shows through, faintly
+      else b = k === 0 ? 1 : k === 2 ? (z2 > 0.35 ? 5 : 4) : (z2 > 0.45 ? 3 : 2);
+      buckets[b].push(c + x1 * Rs, c - y2 * Rs, z2);
+    }
+    const style = [[`rgba(${A},0.07)`, 0.8], [`rgba(${A},0.16)`, 0.7], [`rgba(${A},0.42)`, 1], [`rgba(${A},0.72)`, 1.1],
+      [`rgba(${A},0.85)`, 1.15], ["rgba(235,252,255,0.95)", 1.25]];
+    buckets.forEach((pts, b) => {
+      g.fillStyle = style[b][0];
+      const q = size * style[b][1];
+      for (let j = 0; j < pts.length; j += 3) g.fillRect(pts[j] - q / 2, pts[j + 1] - q / 2, q, q);
+    });
+    g.globalCompositeOperation = "lighter";                                  // signals rising from the land
+    for (const p of EARTH.pings) {
+      if (p.i == null) continue;
+      const x1 = P.x[p.i] * ca + P.z[p.i] * sa, z1 = -P.x[p.i] * sa + P.z[p.i] * ca;
+      const y2 = P.y[p.i] * ct - z1 * sn, z2 = P.y[p.i] * sn + z1 * ct;
+      if (z2 < 0.15) continue;
+      const px = c + x1 * Rs, py = c - y2 * Rs, ph = (s * 0.5 + p.ph) % 1;
+      g.strokeStyle = `rgba(${A},${(1 - ph) * 0.8})`; g.lineWidth = Math.max(1, Rs * 0.006);
+      g.beginPath(); g.ellipse(px, py, Rs * 0.09 * ph, Rs * 0.09 * ph * Math.max(0.25, z2), 0, 0, 7); g.stroke();
+      g.fillStyle = "rgba(255,190,90,0.95)"; g.fillRect(px - size, py - size, size * 2, size * 2);
+    }
+    g.globalCompositeOperation = "source-over";
+    if (LV > 0.05) {                                                          // the voice across the globe
+      g.strokeStyle = `rgba(${A},${0.5 + LV * 0.5})`; g.lineWidth = Math.max(1.2, Rs * 0.012); g.beginPath();
+      for (let x = -1; x <= 1.001; x += 0.025) {
+        const y = Math.sin(x * Math.PI * 3 + s * 9) * Rs * LV * 0.3 * Math.cos(x * Math.PI / 2);
+        x === -1 ? g.moveTo(c + x * Rs * 0.8, c + Rs * 0.32 + y) : g.lineTo(c + x * Rs * 0.8, c + Rs * 0.32 + y);
+      }
+      g.stroke();
+    }
+  }
 
   function fit() {
     const c = st.canvas; if (!c) return false;
@@ -132,14 +209,25 @@
       g.strokeStyle = "rgba(255,255,255,0.07)"; g.beginPath(); g.arc(c, c, r, a0, a0 + span); g.stroke();
       g.strokeStyle = col; g.beginPath(); g.arc(c, c, r, a0, a0 + span * clamp(v, 0, 100) / 100); g.stroke();
       g.fillStyle = "rgba(255,255,255,0.85)";
-      arcText(g, `${nm} ${Math.round(v)}%`, c, c, R0 * 0.625, a0 + 0.03, Math.max(9, R0 * 0.038));
+      arcText(g, `${nm} ${Math.round(v)}%`, c, c, st.core === "globe" ? R0 * 0.715 : R0 * 0.625, a0 + 0.03, Math.max(9, R0 * 0.038));
     });
 
+    if (st.core === "globe") {                              // a thin bright rim instead of the metal ring
+      g.strokeStyle = `rgba(${A},${0.5 + LV * 0.4})`; g.lineWidth = Math.max(1.2, R0 / 300);
+      g.beginPath(); g.arc(c, c, R0 * 0.62, 0, 7); g.stroke();
+      g.strokeStyle = `rgba(${A},0.18)`; g.setLineDash([2, 8]); g.beginPath(); g.arc(c, c, R0 * 0.64, s * 0.2, s * 0.2 + 6.2); g.stroke(); g.setLineDash([]);
+    }
     const m = g.createConicGradient(s * 0.25, c, c);        // 4. metal ring
     ["#1a222c", "#8fa2b5", "#202a35", "#0c1219", "#c9d7e4", "#1a222c"].forEach((q, i) => m.addColorStop(i / 5, q));
     g.strokeStyle = m; g.lineWidth = R0 * 0.03; g.beginPath(); g.arc(c, c, R0 * 0.565, 0, 7); g.stroke();
     g.strokeStyle = `rgba(${A},${0.55 + LV * 0.4})`; g.lineWidth = 1.4; g.beginPath(); g.arc(c, c, R0 * 0.543, 0, 7); g.stroke();
 
+    if (st.core === "globe") {                              // 5a. the dotted Earth, as large as the rings allow
+      drawEarth(g, c, R0 * 0.6, s, A, LV);
+      if (!st.lite && st.shape !== "dots") shapeLayer(g, c, R0, s, A);
+      document.querySelectorAll("[data-vu]").forEach((v) => [...v.children].forEach((b, i) => b.classList.toggle("on", st.level * 18 > i)));
+      return;
+    }
     const Rs = R0 * 0.53, ball = g.createRadialGradient(c - Rs * 0.35, c - Rs * 0.45, Rs * 0.05, c, c, Rs);   // 5. glass sphere
     ball.addColorStop(0, "#1c2b38"); ball.addColorStop(0.45, "#0a121a"); ball.addColorStop(1, "#020407");
     g.save(); g.beginPath(); g.arc(c, c, Rs, 0, 7); g.clip(); g.fillStyle = ball; g.fillRect(c - Rs, c - Rs, Rs * 2, Rs * 2);
@@ -179,6 +267,13 @@
     },
     set(next) { Object.assign(st, next); },
     setShape(name, rgb) { st.shape = name; if (rgb) st.rgb = rgb; },
+    setCore(kind) { st.core = kind === "sphere" ? "sphere" : "globe"; },
+    /** Draws only the dotted Earth on any canvas (the presentation background). */
+    earth(canvas, t, rgb) {
+      const g = canvas.getContext("2d"), W = canvas.width, H = canvas.height, R = Math.min(W, H) * 0.42;
+      g.clearRect(0, 0, W, H); g.save(); g.translate(0, H / 2 - W / 2);       // drawEarth centres on (c, c)
+      drawEarth(g, W / 2, R, t / 1000, rgb || st.rgb, 0); g.restore();
+    },
     setVisible(v) { st.visible = !!v; },
   };
 })();

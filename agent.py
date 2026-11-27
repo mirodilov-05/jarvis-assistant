@@ -94,7 +94,7 @@ def _system(text: str) -> str:
 def preferences() -> str:
     """What Jarvis knows about how YOU like things done (settings + what you said)."""
     out = []
-    service = core.setting("music", "service", "yandex")
+    service = core.setting("music", "service", "youtube")
     out.append("музыка — " + ("Яндекс Музыка" if service == "yandex" else "YouTube"))
     if core.setting("creator", "about", ""):
         out.append("канал про " + core.setting("creator", "about", ""))
@@ -103,7 +103,11 @@ def preferences() -> str:
     name = core.CONFIG.get("assistant", {}).get("user_name", "")
     if name:
         out.append("зовут " + name)
-    out.append("браузер — Яндекс Браузер; игры — CS2 (Steam)")
+    try:   # this owner's browser, games and messengers, from the study of this computer (nothing before it)
+        import personalize
+        out.extend(personalize.preferences())
+    except Exception:  # noqa: BLE001
+        core.log.exception("personal preferences unavailable")
     return "; ".join(out)
 
 

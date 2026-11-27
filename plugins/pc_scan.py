@@ -18,13 +18,19 @@ from core import Ctx, skill
     priority=20,
 )
 def pc_scan(ctx: Ctx) -> str:
-    d = pc_profile.scan()
-    apps = len(d.get("installed") or d.get("apps") or [])
-    hw = d.get("hardware", {})
-    return ctx.t(
-        f"Изучил компьютер: {apps} программ, {hw.get('ram_gb', '?')} ГБ памяти, браузер {d.get('browser') or 'не определён'}. "
-        "Файлы я не открывал. Всё хранится только на этом компьютере.",
-        "Kompyuterni o'rgandim.")
+    """The full study (programs, games, browser, music, file names, Russian names of programs), in the background."""
+    import threading
+
+    import personalize
+    if personalize.STATE["running"]:
+        return ctx.t("Уже изучаю компьютер, сэр. Скажу, когда закончу.", "Allaqachon o'rganyapman.")
+
+    def go():
+        r = personalize.run()
+        core.speak(personalize.say_result(r), ctx.lang)
+    threading.Thread(target=go, daemon=True, name="personalize-voice").start()
+    return ctx.t("Изучаю компьютер: программы, игры, браузер и имена файлов. Это займёт минуту-две, скажу, когда закончу. "
+                 "Файлы я не открываю, всё остаётся на этом компьютере.", "Kompyuterni o'rganyapman.")
 
 
 @skill(

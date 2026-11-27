@@ -20,8 +20,8 @@ def _part_of_day(lang: str) -> str:
 def _weather_line(lang: str) -> str:
     try:
         mod = __import__("jarvis_plugin_weather")
-        city = core.CONFIG.get("weather", {}).get("city", "Tashkent")
-        return " " + mod.short_weather(city, lang)
+        city = core.CONFIG.get("weather", {}).get("city", "")
+        return " " + mod.short_weather(city, lang) if city else ""
     except Exception:  # noqa: BLE001
         return ""
 

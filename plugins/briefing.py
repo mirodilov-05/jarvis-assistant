@@ -28,11 +28,11 @@ def _part_of_day(lang: str) -> str:
 
 
 def collect(lang: str) -> dict:
-    city = core.CONFIG.get("weather", {}).get("city", "Tashkent")
+    city = core.CONFIG.get("weather", {}).get("city", "")
     jobs = {
         "tasks": lambda: _mod("tasks").summary(lang),
         "calendar": lambda: _mod("calendar_ics").summary(lang),
-        "weather": lambda: _mod("weather").short_weather(city, lang),
+        "weather": lambda: _mod("weather").short_weather(city, lang) if city else "",
         "email": lambda: _mod("email_imap").summary(lang, detailed=True),
         "telegram": lambda: _mod("telegram").summary(lang, detailed=True),
         "whatsapp": lambda: _mod("whatsapp").summary(lang, detailed=True),

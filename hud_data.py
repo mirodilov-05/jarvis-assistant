@@ -340,7 +340,9 @@ _WMO = {0: ("ясно", "sun"), 1: ("почти ясно", "sun"), 2: ("обла
 
 def _weather() -> dict:
     import core
-    city = core.setting("weather", "city", "Tashkent")
+    city = core.setting("weather", "city", "")
+    if not city:
+        return {"city": "", "error": "город не задан: скажите «мой город …»"}
     q = urllib.parse.urlencode({"name": city, "count": 1, "language": "ru"})
     res = (_http_json("https://geocoding-api.open-meteo.com/v1/search?" + q, timeout=8).get("results") or [None])[0]
     if not res:

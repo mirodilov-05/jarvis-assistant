@@ -427,6 +427,7 @@
 
 | Навык / Ko'nikma | Примеры (ru) | Misollar (uz) |
 |---|---|---|
+| Запомнить мой город для погоды / Shaharimni eslab qolish | «Мой город Самарканд» | «Mening shahrim Samarqand» |
 | Погода сейчас и на завтра / Ob-havo (hozir va ertaga) | «Какая погода?»; «Погода в Самарканде» | «Ob-havo qanday?» |
 
 ## wellbeing

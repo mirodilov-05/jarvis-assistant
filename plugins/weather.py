@@ -36,6 +36,8 @@ def _forecast(lat: float, lon: float) -> dict:
 
 
 def short_weather(city: str, lang: str) -> str:
+    if not city:
+        return ""
     place = _geocode(city, lang)
     if not place:
         return ""
@@ -63,9 +65,12 @@ def short_weather(city: str, lang: str) -> str:
     priority=25,
 )
 def weather(ctx: Ctx) -> str:
-    city = ctx.cfg("weather").get("city", "Tashkent")
+    city = ctx.cfg("weather").get("city", "")
     if ctx.lang == "ru" and ctx.match and ctx.match.lastindex and ctx.group(1) not in ("", "сегодня", "завтра", "сейчас", "на"):
         city = ctx.group(1)
+    if not city:
+        return ctx.t("Для какого города? Скажите «мой город» и название, например «мой город Самарканд». "
+                     "Я запомню его.", "Qaysi shahar uchun? Masalan: «mening shahrim Samarqand».")
     place = _geocode(city, ctx.lang)
     if not place:
         return ctx.t(f"Не нашёл город {city}.", f"{city} shahri topilmadi.")
@@ -79,3 +84,22 @@ def weather(ctx: Ctx) -> str:
                 f"Ertaga {tmin} dan {tmax} darajagacha, {_CODES_UZ.get(tcode, '')}.")
     return (f"В городе {name} сейчас {t} градусов, {_CODES_RU.get(code, '')}. "
             f"Завтра от {tmin} до {tmax}, {_CODES_RU.get(tcode, '')}.")
+
+
+@skill(
+    "weather.set_city",
+    title={"ru": "Запомнить мой город для погоды", "uz": "Shaharimni eslab qolish"},
+    patterns={"ru": [r"^(?:джарвис )?(?:мой город|я живу в(?: городе)?|я из(?: города)?|запомни(?: мой)? город|город по умолчанию)"
+                     r" (?P<c>[а-яa-z\- ]{2,30})$"],
+              "uz": [r"^(?:jarvis )?mening shahrim (?P<c>[a-z\- ]{2,30})$"]},
+    examples={"ru": ["Мой город Самарканд"], "uz": ["Mening shahrim Samarqand"]},
+    priority=20,
+)
+def set_city(ctx: Ctx) -> str:
+    city = ctx.match.group("c").strip()
+    place = _geocode(city, ctx.lang)
+    if not place:
+        return ctx.t(f"Не нашёл город «{city}». Скажите название ещё раз.", f"«{city}» topilmadi.")
+    name = place[2]
+    core.save_setting("weather", "city", name)
+    return ctx.t(f"Запомнил: ваш город {name}. Теперь «какая погода» — про него.", f"Eslab qoldim: {name}.")

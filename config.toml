@@ -110,8 +110,8 @@ ollama_url = "http://127.0.0.1:11434"
 model = "qwen3.5:2b-q4_K_M"   # compact 4-bit build: fits in 4 GB VRAM, answers in ~0.4 s
 
 [weather]
-# Default city for "Какая погода?" / "Ob-havo qanday?"
-city = "Tashkent"
+# Default city for "Какая погода?" / "Ob-havo qanday?". Empty: Jarvis asks once («мой город Самарканд»)
+city = ""
 
 [email]
 # IMAP mailbox. For Gmail create an "App password" at

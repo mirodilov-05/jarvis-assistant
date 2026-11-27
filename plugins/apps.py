@@ -530,7 +530,7 @@ def result_open(ctx: Ctx) -> str | None:
 )
 def music(ctx: Ctx) -> str:
     q = ctx.group(1)
-    service = core.CONFIG.get("music", {}).get("service", "yandex")
+    service = core.CONFIG.get("music", {}).get("service", "youtube")
     if q in ("музыку", "что нибудь послушать", "мою волну", "радио", "musiqa", "qoshiq"):
         url = "https://music.yandex.ru" if service == "yandex" else "https://music.youtube.com"
         os.startfile(url)

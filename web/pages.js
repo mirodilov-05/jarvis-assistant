@@ -351,11 +351,25 @@
   SEC.computer = (el) => {
     const f = V3().features || {}, perf = V3().performance || {}, vpn = (STATE.shield || {}).vpn || {};
     el.innerHTML = section("computer", "Компьютер и безопасность", "Анализ ноутбука, поиск по документам, VPN и режим игры.",
+      panel("Изучение компьютера", "Программы, игры, браузер, музыка, мессенджеры и имена файлов: чтобы Джарвис открывал то, что есть у вас. Файлы не открываются, всё остаётся на этом компьютере. Повторите после установки новых программ.",
+        `<div class="sub" id="studyInfo">Проверяю…</div><div class="foot"><button class="btn" id="btnStudy">Изучить компьютер заново</button></div>`) +
       panel("Анализ и оптимизация", "Ноутбук оценивается, и предлагаются безопасные улучшения. Ничего не меняется без вашего выбора.", `<div class="foot"><button class="btn primary" id="btnAnalyze">Проанализировать ноутбук</button></div>`) +
       panel("Режим игры", "", row("Не беспокоить во время игр", "Джарвис молчит, пока идёт игра, и экономит видеопамять", sw("performance", "game_mode", perf.game_mode !== false, "Режим игры"))) +
       panel("VPN", "Имя туннеля WireGuard, который включает команда «включи VPN». Туннель создаётся в приложении WireGuard.", `${row("Имя туннеля", vpn.on ? "сейчас включён" : "сейчас выключен", `<input type="text" data-set="vpn|tunnel|str" value="${esc((V3().vpn || {}).tunnel || "")}" placeholder="например, home" aria-label="Туннель">`)}`) +
       panel("Документы", "Поиск по PDF, Word и текстовым файлам — в разделе «Память».", `<div class="foot"><button class="btn" data-go="#/memory">Открыть «Память»</button></div>`));
     $("#btnAnalyze").onclick = () => JV.STATE && window.Analysis && Analysis.open();
+    const studyInfo = async () => {
+      const box = $("#studyInfo"); if (!box) return;
+      try {
+        const st = await api("/api/personalize");
+        const r = st.result;
+        box.textContent = st.running ? `Изучаю: ${st.step || "…"}` : r ? `Изучено: программ ${r.programs}, игр ${r.games}, файлов ${r.files}.${r.browser ? " Браузер: " + r.browser + "." : ""}`
+          : st.studied ? `Изучен ${String(st.studied_at).slice(0, 16).replace("T", " ")}.` : "Ещё не изучен.";
+        if (st.running) setTimeout(studyInfo, 1500);
+      } catch (e) { box.textContent = e.message; }
+    };
+    studyInfo();
+    $("#btnStudy").onclick = async (e) => { await busy(e.currentTarget, () => api("/api/personalize", "POST", {})); toast("Изучаю компьютер, это займёт минуту-две"); setTimeout(studyInfo, 800); };
     el.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => (location.hash = b.dataset.go.slice(1))));
   };
 
@@ -381,15 +395,36 @@
     api("/api/hud").then((h) => { const b = $("#logBox"); if (b) b.textContent = (h.logs || []).join("\n") || "Журнал пуст"; }).catch(() => {});
   };
 
-  /* ---------- First run: three steps ---------- */
-  const ONB = { step: 0, persona: "tactical", cloud: true, palette: PREFS().palette };
+  /* ---------- First run: five steps. The last one studies THIS computer, so Jarvis fits its new owner ---------- */
+  const ONB = { step: 0, persona: "tactical", cloud: true, palette: PREFS().palette, city: "", study: null, timer: 0 };
+  const ONB_STEPS = ["Голос", "Характер и цвет", "Работа", "Ваш город", "Ваш компьютер"];
   function onbOpen() {
     const d = $("#dlg"); if (d.open) return;
     ONB.step = 0; onbDraw(d); d.showModal();
   }
+  function studyHtml() {
+    const st = ONB.study;
+    if (!st) return `<button class="btn primary" id="onbStudy">Изучить компьютер</button>`;
+    if (st.running) return `<div class="callout"><div><b>Изучаю: ${esc(st.step || "начинаю")}…</b>Готово: ${esc((st.done || []).join(", ") || "пока ничего")}. Можно нажать «Готово»: изучение продолжится само.</div></div>`;
+    const r = st.result;
+    if (!r) return `<button class="btn primary" id="onbStudy">Изучить компьютер</button>`;
+    return `<div class="callout"><div><b>Готово. Теперь Джарвис знает ваш компьютер</b>Программ: ${r.programs}${r.games ? `, игр: ${r.games}` : ""}${r.files ? `, файлов: ${r.files}` : ""}.${r.browser ? ` Браузер: ${esc(r.browser)}.` : ""}${r.music ? ` Музыка: ${esc(r.music)}.` : ""}${(r.messengers || []).length ? ` Мессенджеры: ${esc(r.messengers.join(", "))}.` : ""}${r.names ? ` Выучил русских названий: ${r.names}.` : ""}${(r.failed || []).length ? `<br><span class="faint small">Не получилось: ${esc(r.failed.join("; "))}</span>` : ""}</div></div>`;
+  }
+  async function pollStudy(d) {
+    clearInterval(ONB.timer);
+    ONB.timer = setInterval(async () => {
+      try { ONB.study = await api("/api/personalize"); } catch { return; }
+      if (ONB.step === 4 && d.open) { const box = d.querySelector("#onbStudyBox"); if (box) { box.innerHTML = studyHtml(); bindStudy(d); } }
+      if (!ONB.study.running) clearInterval(ONB.timer);
+    }, 1000);
+  }
+  function bindStudy(d) {
+    const b = d.querySelector("#onbStudy");
+    if (b) b.onclick = async () => { b.disabled = true; try { await api("/api/personalize", "POST", {}); ONB.study = { running: true, step: "начинаю", done: [] }; d.querySelector("#onbStudyBox").innerHTML = studyHtml(); pollStudy(d); } catch (e) { toast(e.message); b.disabled = false; } };
+  }
   function onbDraw(d) {
     const s = ONB.step, enrolled = !!(STATE.v3 && STATE.v3.voice_enrolled) || !!(STATE.hud && STATE.hud.voice_enrolled);
-    const steps = ["Голос", "Характер и цвет", "Работа"];
+    const steps = ONB_STEPS, last = steps.length - 1;
     let body = "";
     if (s === 0) body = `<p class="onb-big">Джарвис будет слушать только вас. Прочитайте вслух три-четыре предложения: он запомнит ваш голос, и чужие голоса и телевизор его не разбудят.</p>
       <button class="voice-test" id="onbVoice" ${enrolled ? "disabled" : ""}><b>${enrolled ? "Голос запомнен" : "Нажмите и читайте"}</b><span>${enrolled ? "можно идти дальше" : "около 20 секунд"}</span></button>`;
@@ -398,11 +433,20 @@
     if (s === 2) body = `<p class="onb-big">Как Джарвис будет работать?</p>
       <button class="opt" data-onbcl="1" aria-pressed="${ONB.cloud}"><span><b>С облаком (рекомендуется)</b><small>Быстрее отвечает и понимает речь. Нужен бесплатный ключ Groq — его вводят в «Настройки → Ключи».</small></span></button>
       <button class="opt" data-onbcl="0" aria-pressed="${!ONB.cloud}"><span><b>Без интернета</b><small>Всё работает на этом ноутбуке. Медленнее, зато ничего никуда не уходит.</small></span></button>`;
+    if (s === 3) body = `<p class="onb-big">Для погоды и утренней сводки. Можно пропустить и сказать позже: «мой город Самарканд».</p>
+      <div class="field"><label for="onbCity">Город</label><input id="onbCity" type="text" maxlength="40" placeholder="например: Москва, Ташкент, Алматы" value="${esc(ONB.city)}" autocomplete="off"></div>`;
+    if (s === 4) body = `<p class="onb-big">Джарвис изучит этот компьютер один раз, чтобы открывать то, что есть именно у вас, и называть это вашими словами.</p>
+      <ul class="small muted" style="margin:0 0 12px 18px;padding:0;line-height:1.7"><li>программы и игры (Steam, Epic, ярлыки), браузер, музыка, мессенджеры</li><li>Windows, процессор, память, видеокарта</li><li>имена файлов в ваших папках, чтобы находить их по названию</li></ul>
+      <p class="small faint" style="margin-bottom:12px">Файлы не открываются и не читаются, ничего не отправляется в интернет. Всё хранится только на этом компьютере, в папке data. Повторить позже: «изучи мой компьютер».</p>
+      <div id="onbStudyBox">${studyHtml()}</div>`;
     d.innerHTML = `<div class="onb-steps" aria-hidden="true">${steps.map((_, i) => `<i class="${i <= s ? "on" : ""}"></i>`).join("")}</div>
-      <h3>Знакомство · шаг ${s + 1} из 3: ${steps[s]}</h3><p style="margin-bottom:12px">Всё можно поменять позже в настройках.</p>${body}
-      <div class="bs"><button class="btn" id="onbBack" ${s === 0 ? "hidden" : ""}>Назад</button><button class="btn primary" id="onbNext" ${s === 0 && !enrolled ? "disabled" : ""}>${s === 2 ? "Готово, к анализу" : "Дальше"}</button></div>`;
+      <h3>Знакомство · шаг ${s + 1} из ${steps.length}: ${steps[s]}</h3><p style="margin-bottom:12px">Всё можно поменять позже в настройках.</p>${body}
+      <div class="bs"><button class="btn" id="onbBack" ${s === 0 ? "hidden" : ""}>Назад</button>${s === 0 && !enrolled ? `<button class="btn ghost" id="onbSkip">Пропустить</button>` : ""}<button class="btn primary" id="onbNext" ${s === 0 && !enrolled ? "disabled" : ""}>${s === last ? "Готово" : "Дальше"}</button></div>`;
     d.querySelector("#onbBack").onclick = () => { ONB.step--; onbDraw(d); };
     d.querySelector("#onbNext").onclick = onbNext;
+    const skip = d.querySelector("#onbSkip"); if (skip) skip.onclick = () => { ONB.step++; onbDraw(d); };
+    const city = d.querySelector("#onbCity"); if (city) city.oninput = () => { ONB.city = city.value; };
+    if (s === 4) { bindStudy(d); if (!ONB.study) api("/api/personalize").then((st) => { if (st.running || st.result) { ONB.study = st; d.querySelector("#onbStudyBox").innerHTML = studyHtml(); bindStudy(d); if (st.running) pollStudy(d); } }).catch(() => {}); }
     const v = d.querySelector("#onbVoice"); if (v) v.onclick = async () => { await api("/api/voice/enroll", "POST").catch((e) => toast(e.message)); toast("Читайте текст, запись около 20 секунд"); };
     d.querySelectorAll("[data-onbp]").forEach((b) => b.onclick = () => { ONB.persona = b.dataset.onbp; onbDraw(d); });
     d.querySelectorAll("[data-onbc]").forEach((b) => b.onclick = () => { ONB.palette = b.dataset.onbc; PREFS().palette = ONB.palette; savePrefs(); applyLook(); onbDraw(d); });
@@ -412,8 +456,10 @@
   async function onbNext() {
     const d = $("#dlg");
     if (ONB.step === 1) { await api("/api/persona", "POST", { persona: ONB.persona }).catch(() => {}); }
-    if (ONB.step < 2) { ONB.step++; onbDraw(d); return; }
-    await api("/api/settings", "POST", { section: "cloud", key: "enabled", value: ONB.cloud }).catch(() => {});
+    if (ONB.step === 2) { await api("/api/settings", "POST", { section: "cloud", key: "enabled", value: ONB.cloud }).catch(() => {}); }
+    if (ONB.step === 3 && ONB.city.trim()) { await api("/api/settings", "POST", { section: "weather", key: "city", value: ONB.city.trim() }).catch(() => {}); }
+    if (ONB.step < ONB_STEPS.length - 1) { ONB.step++; onbDraw(d); return; }
+    clearInterval(ONB.timer);
     await api("/api/settings", "POST", { section: "ui", key: "onboarded", value: true }).catch(() => {});
     await api("/api/setup/done", "POST", {}).catch(() => {});
     d.close(); setTimeout(openAnalysis, 200); pollSlow();

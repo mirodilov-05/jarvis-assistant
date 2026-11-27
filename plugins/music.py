@@ -195,7 +195,7 @@ def play(query: str = "", ask: bool = False, service: str | None = None) -> str:
             q = v.replace(" mix", "")
             break
     wave = generic or bool(WAVE_WORDS.match(low))
-    service = service or core.setting("music", "service", "yandex")
+    service = service or core.setting("music", "service", "youtube")     # set by the study of this PC or by the owner
     if service == "yandex":
         if wave:
             _yandex_play("https://music.yandex.ru/", "Моя волна")

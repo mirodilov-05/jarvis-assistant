@@ -408,9 +408,23 @@ def whisper(kind: str = "main"):
 
 
 PROMPTS = {
-    "ru": "Открой Telegram. Включи Яндекс Музыку. Стоп музыка. Закрой вкладку. Выключи ноутбук. YouTube, WhatsApp, Steam, Discord, CS2.",
+    "ru": "Открой Telegram. Включи музыку. Стоп музыка. Закрой вкладку. Выключи ноутбук. Какая погода.",
     "uz": "Jarvis, telegramni och, vazifa qo'sh, nechta vazifam bor, yozib ol, to'xtat.",
 }
+
+
+def _prompt(lang: str | None) -> str:
+    """The speech hint: common commands plus the names of THIS computer's programs and games (after its study)."""
+    base = PROMPTS.get(lang or "ru", "")
+    if (lang or "ru") == "ru":
+        try:
+            import personalize
+            hint = personalize.speech_hint()
+        except Exception:  # noqa: BLE001
+            hint = ""
+        if hint:
+            return f"{base} {hint}."
+    return base
 _HALLUCINATIONS = re.compile(
     r"(продолжение следует|субтитр|редактор субтитров|спасибо за просмотр|подписывайтесь|ставьте лайк|"
     r"thank you for watching|amara\.org|dima torzok|корректор|до новых встреч|^музыка$|"
@@ -468,7 +482,7 @@ def transcribe(audio: np.ndarray, accurate: bool = True, lang_hint: str | None =
         segments, _ = whisper("spot" if spot else "main").transcribe(
             a, language=lg, beam_size=5 if accurate else 2, vad_filter=False, without_timestamps=True,
             condition_on_previous_text=False, temperature=0.0,
-            initial_prompt=PROMPTS.get(lg) if accurate else ("Эй, Джарвис." if spot else None))
+            initial_prompt=_prompt(lg) if accurate else ("Эй, Джарвис." if spot else None))
         out = list(segments)
         score = (sum(x.avg_logprob for x in out) / len(out)) if out else -9.0
         return out, score
@@ -497,7 +511,7 @@ def transcribe(audio: np.ndarray, accurate: bool = True, lang_hint: str | None =
     reliable = not (avg_logprob < -1.0 or (no_speech > 0.6 and avg_logprob < -0.6) or compression > 2.4
                     or _HALLUCINATIONS.search(text) or _REPEATS.search(text.replace(" ", ""))
                     # an echo of the vocabulary hint on silence/noise (real commands are heard confidently)
-                        or (text.strip(" .,!?").lower() in PROMPTS.get(lang, "").lower() and no_speech > 0.3 and avg_logprob < -0.45))
+                        or (text.strip(" .,!?").lower() in _prompt(lang).lower() and no_speech > 0.3 and avg_logprob < -0.45))
     log.info("STT [%s] %.2f/%.2f/%.1f %s: %s", lang, avg_logprob, no_speech, compression,
              "ok" if reliable else "REJECTED", text[:200])
     if accurate:   # show in the app what was heard
@@ -508,14 +522,14 @@ def transcribe(audio: np.ndarray, accurate: bool = True, lang_hint: str | None =
 def _reliable(text: str, lang: str, avg_logprob: float, no_speech: float, compression: float) -> bool:
     return not (avg_logprob < -1.0 or (no_speech > 0.6 and avg_logprob < -0.6) or compression > 2.4
                 or _HALLUCINATIONS.search(text) or _REPEATS.search(text.replace(" ", ""))
-                or (text.strip(" .,!?").lower() in PROMPTS.get(lang, "").lower() and no_speech > 0.3 and avg_logprob < -0.45))
+                or (text.strip(" .,!?").lower() in _prompt(lang).lower() and no_speech > 0.3 and avg_logprob < -0.45))
 
 
 def _transcribe_cloud(audio: np.ndarray, accurate: bool, lang_hint: str | None, hint: bool = True) -> tuple[str, str, bool]:
     """Groq Whisper large-v3 turbo: ~0.3 s, nothing on the GPU."""
     allowed = langs()
     lang = lang_hint or (allowed[0] if len(allowed) == 1 else None)
-    res = cloud.transcribe(audio, lang, PROMPTS.get(lang or "ru") if accurate and hint else None)
+    res = cloud.transcribe(audio, lang, _prompt(lang or "ru") if accurate and hint else None)
     text, lang, segs = res["text"], res["lang"], res["segments"]
     if lang not in core.LANGS:
         lang = allowed[0]
@@ -2113,6 +2127,17 @@ def run_server() -> None:
             return {"items": rows, "total": total}
         return web.json_response(await asyncio.to_thread(read))
 
+    async def personalize_get(_r):
+        import personalize
+        return web.json_response(await asyncio.to_thread(personalize.status))
+
+    async def personalize_post(r):
+        """The owner pressed «Изучить компьютер» (first run or Settings): that button is the consent."""
+        _own_page(r)
+        import personalize
+        started = personalize.start_background()
+        return web.json_response({"ok": True, "started": started})
+
     async def show_get(_r):
         from cognition import show
         return web.json_response(show.public())
@@ -2341,6 +2366,7 @@ def run_server() -> None:
         web.post("/api/capsule", capsule), web.post("/api/window/hide", window_hide), web.post("/api/say", say), web.post("/api/ui/open", ui_open),
         web.get("/api/state", state), web.post("/api/command", command),
         web.get("/api/history", history_get), web.get("/api/show", show_get), web.get("/api/show/audio/{name}", show_audio),
+        web.get("/api/personalize", personalize_get), web.post("/api/personalize", personalize_post),
         web.get("/api/pc-profile", pc_profile_get), web.post("/api/pc-scan", pc_scan_post),
         web.get("/api/pc-index", pc_index_get), web.post("/api/pc-index", pc_index_post),
         web.get("/api/activity", activity_get), web.get("/api/programs", programs_get),

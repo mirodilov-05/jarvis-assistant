@@ -162,10 +162,11 @@ def test_presentation_state_for_the_screen():
 
 
 def test_palettes_have_their_own_geometry_in_the_page():
-    src = (ROOT / "web" / "hud.js").read_text(encoding="utf-8")
-    for pid in ("solar", "emerald", "crimson", "violet"):
-        check(f"palette {pid} draws its own shape", f'id === "{pid}"' in src)
-    check("five palettes exist", src.count('{ id: "') >= 5)
+    app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    core = (ROOT / "web" / "core.js").read_text(encoding="utf-8")
+    for shape in ("dots", "grid", "shield", "orbits"):
+        check(f"shape {shape} is drawn by the core", f'st.shape === "{shape}"' in core)
+    check("five palettes exist", app.count('{ id: "') >= 5)
 
 
 if __name__ == "__main__":

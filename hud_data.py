@@ -733,6 +733,22 @@ def action(kind: str, body: dict) -> dict:
         r = _prime_post("/api/cards", {"front": str(body.get("front", ""))[:200], "back": str(body.get("back", ""))[:300]})
     elif kind == "card_deck":
         r = _prime_post("/api/cards", {"deck": "n2"})
+    elif kind == "show":
+        from cognition import show as shw
+        op = str(body.get("op", ""))
+        if op == "start":
+            st = shw.start(str(body.get("lang", "ru")))
+        elif op == "next":
+            st = shw.step(1)
+        elif op == "prev":
+            st = shw.step(-1)
+        elif op == "lang":
+            st = shw.switch(str(body.get("lang", "ru")))
+        elif op == "stop":
+            shw.stop(); st = shw.public()
+        else:
+            raise ValueError("неизвестное действие презентации")
+        return {"reply": "Готово.", "show": st}
     elif kind == "deck":
         return {"slides": deck(str(body.get("lang", "ru")))}
     else:

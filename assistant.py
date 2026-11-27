@@ -1704,6 +1704,9 @@ def run_server() -> None:
                       "duck_level": float(cfg("voice", "duck_level", 0.15)),
                       "piper_voices": sorted(p.name.split("-")[1] for p in VOICES_DIR.glob("ru_RU-*-medium.onnx"))},
             "onboarded": bool(core.setting("ui", "onboarded", False)),
+            "vpn": {"tunnel": core.setting("vpn", "tunnel", "")},
+            "performance": {"game_mode": bool(core.setting("performance", "game_mode", True))},
+            "weather": {"city": core.setting("weather", "city", "")},
         }
 
     async def ui_open(r):
@@ -2078,6 +2081,31 @@ def run_server() -> None:
             raise web.HTTPForbidden()
         return web.json_response(await asyncio.to_thread(reflection.reflect))
 
+    async def calendar_get(r):
+        import datetime as dt
+        cal = _plugin("calendar_ics")
+        if not cal:
+            return web.json_response({"count": 0, "events": []})
+        days = max(1, min(14, int(r.query.get("days", 1))))
+        today = dt.date.today()
+        evs = await asyncio.to_thread(cal.events, today, days)
+        out = [{"title": e["title"], "start": e["start"].isoformat(timespec="minutes") if hasattr(e["start"], "isoformat") else str(e["start"]),
+                "all_day": bool(e["all_day"]), "location": e.get("location", "")} for e in evs[:40]]
+        return web.json_response({"count": len(cal.ics_urls()), "events": out})
+
+    async def history_clear(r):
+        if r.headers.get("X-Jarvis") != "1":
+            raise web.HTTPForbidden()
+        import datetime as dt
+        import shutil
+        hf = core.HISTORY_FILE
+        if hf.exists() and hf.stat().st_size:
+            stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+            shutil.copy(hf, hf.with_name(f"history.backup-{stamp}.jsonl"))
+            hf.write_text("", encoding="utf-8")
+        core.LAST_ACTION.update(skill="", tools="")
+        return web.json_response({"ok": True, "message": "История очищена. Резервная копия сохранена в папке data."})
+
     async def skills_get(_r):
         return web.json_response({"count": len(core.SKILLS)})
 
@@ -2303,6 +2331,7 @@ def run_server() -> None:
         web.get("/api/pc-index", pc_index_get), web.post("/api/pc-index", pc_index_post),
         web.get("/api/activity", activity_get), web.get("/api/programs", programs_get),
         web.get("/api/skills", skills_get),
+        web.get("/api/calendar", calendar_get), web.post("/api/history/clear", history_clear),
         web.post("/api/feedback", feedback_post), web.get("/api/learning/metrics", learning_metrics),
         web.get("/api/memory/facts", memory_facts_get), web.post("/api/memory/facts", memory_facts_post),
         web.delete("/api/memory/facts/{id}", memory_facts_delete),

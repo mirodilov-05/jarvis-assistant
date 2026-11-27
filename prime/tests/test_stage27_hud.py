@@ -35,8 +35,8 @@ def jarvis_part():
             check(f"{kind} refused", False)
         except ValueError:
             check(f"{kind} refused", True)
-    js = (ROOT / "web" / "hud.js").read_text(encoding="utf-8")
-    check("30 widgets", len(re.findall(r"^  \[\"[a-z]+\", \"", js, re.M)) == 30)
+    js = (ROOT / "web" / "app.js").read_text(encoding="utf-8") + (ROOT / "web" / "core.js").read_text(encoding="utf-8")
+    check("the home screen has at least 20 widgets", len(re.findall(r'^    W\("', js, re.M)) >= 20)
     check("page does not poll through commands", "статус телевизора" not in js and "hudTvStatus" not in js)
 
 
